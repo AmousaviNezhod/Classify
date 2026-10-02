@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">Classify</string>
+    <string name="app_title_persian">برنامه کلاسی دانشگاه</string>
+    <string name="get_latest_schedule">دریافت به‌روزترین برنامه</string>
+    <string name="no_schedule_title">برنامه‌ای دریافت نشده</string>
+    <string name="no_schedule_desc">برای دریافت آخرین برنامه دانشگاه روی دکمه زیر بزنید.</string>
+    <string name="my_schedule">برنامه من</string>
+    <string name="last_updated">آخرین بروزرسانی:</string>
+    <string name="weekly_schedule">برنامه هفتگی</string>
+    <string name="schedule_changes">تغییرات برنامه</string>
+    <string name="settings">تنظیمات</string>
+    <string name="all_days">همه روزها</string>
+    <string name="saturday">شنبه</string>
+    <string name="sunday">یکشنبه</string>
+    <string name="monday">دوشنبه</string>
+    <string name="tuesday">سه‌شنبه</string>
+    <string name="wednesday">چهارشنبه</string>
+    <string name="thursday">پنج‌شنبه</string>
+    <string name="friday">جمعه</string>
+</resources>

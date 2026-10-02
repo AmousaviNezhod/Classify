@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>انتخاب واحد — نمایش محصول</title>
+<style>
+  :root { color-scheme: dark; background: #080d14; }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #080d14; }
+  body { font-family: "Vazirmatn", "IRANSans", "Noto Sans Arabic", Tahoma, sans-serif; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="reel" aria-label="شو‌ریل انتخاب واحد هوشمند"></canvas>
+<script>
+(() => {
+  'use strict';
+  const params = new URLSearchParams(location.search);
+  const CONFIG = Object.freeze({
+    width: Math.max(320, Number(params.get('width')) || 1920),
+    height: Math.max(240, Number(params.get('height')) || 1080),
+    fps: Math.max(1, Number(params.get('fps')) || 60),
+    duration: Math.max(1, Number(params.get('duration')) || 18)
+  });
+  const W = 1920, H = 1080;
+  const canvas = document.getElementById('reel');
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  canvas.width = CONFIG.width;
+  canvas.height = CONFIG.height;
+  const C = {
+    bg: '#080d14', surface: '#111a25', surface2: '#151f2c', line: '#273545',
+    text: '#edf3f6', muted: '#8d9cab', quiet: '#617181', mint: '#7be2c2',
+    blue: '#94aaff', amber: '#efc27a', red: '#ec827c', green: '#9ce0b2'
+  };
+  const FONT = '"Vazirmatn", "IRANSans", "Noto Sans Arabic", Tahoma, sans-serif';
+  const clamp = (x, a=0, b=1) => Math.max(a, Math.min(b, x));
+  const mix = (a,b,p) => a + (b-a)*p;
+  const smooth = (a,b,x) => { const p=clamp((x-a)/(b-a)); return p*p*(3-2*p); };
+  const easeOutCubic = x => 1-Math.pow(1-clamp(x),3);
+  const easeInOutCubic = x => { x=clamp(x); return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2; };
+  const easeOutExpo = x => x>=1?1:1-Math.pow(2,-10*clamp(x));
+  const easeOutBack = x => { const c=1.35; x=clamp(x); return 1+(c+1)*Math.pow(x-1,3)+c*Math.pow(x-1,2); };
+  const easeOutElastic = x => { x=clamp(x); if(x===0||x===1)return x; return Math.pow(2,-10*x)*Math.sin((x*10-.75)*(2*Math.PI/3))+1; };
+  const easeInBack = x => { const c=1.70158; x=clamp(x); return (c+1)*x*x*x-c*x*x; };
+  const fract = x => x-Math.floor(x);
+  const hash = n => fract(Math.sin(n*127.1+311.7)*43758.5453123);
+
+  function rounded(x,y,w,h,r,fill,stroke,lineWidth=1) {
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,r);
+    if(fill){ctx.fillStyle=fill;ctx.fill();}
+    if(stroke){ctx.lineWidth=lineWidth;ctx.strokeStyle=stroke;ctx.stroke();}
+  }
+  function text(str,x,y,size,color=C.text,opts={}) {
+    ctx.save(); ctx.direction=opts.direction||'rtl'; ctx.textAlign=opts.align||'right';
+    ctx.textBaseline=opts.baseline||'middle'; ctx.font=`${opts.weight||400} ${size}px ${FONT}`;
+    ctx.fillStyle=color; if(opts.alpha!==undefined)ctx.globalAlpha*=opts.alpha;
+    if(opts.shadow){ctx.shadowColor=opts.shadow;ctx.shadowBlur=opts.blur||12;}
+    ctx.fillText(str,x,y,opts.maxWidth); ctx.restore();
+  }
+  function line(x1,y1,x2,y2,color,width=1,alpha=1) {
+    ctx.save();ctx.globalAlpha*=alpha;ctx.strokeStyle=color;ctx.lineWidth=width;
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();ctx.restore();
+  }
+  function pill(x,y,w,label,opts={}) {
+    const h=opts.h||38; rounded(x,y,w,h,h/2,opts.fill||'#17232e',opts.stroke||'#2b3a49',1);
+    if(opts.dot){ctx.fillStyle=opts.dot;ctx.beginPath();ctx.arc(x+w-17,y+h/2,4,0,Math.PI*2);ctx.fill();}
+    text(label,x+w-(opts.dot?31:14),y+h/2,opts.size||15,opts.color||C.muted,{weight:opts.weight||500});
+  }
+  function glow(x,y,r,color,alpha=.18) {
+    const g=ctx.createRadialGradient(x,y,0,x,y,r);
+    g.addColorStop(0,color);g.addColorStop(1,'rgba(8,13,20,0)');
+    ctx.save();ctx.globalAlpha*=alpha;ctx.fillStyle=g;ctx.fillRect(x-r,y-r,2*r,2*r);ctx.restore();
+  }
+  function logoMark(x,y,size,alpha=1) {
+    ctx.save();ctx.globalAlpha*=alpha;ctx.translate(x,y);ctx.scale(size/64,size/64);
+    rounded(-32,-32,64,64,19,'#15272c','#36574f',1.2);
+    rounded(-18,-17,36,34,8,'#1d3438',null);
+    line(-10,-5,10,-5,C.mint,2.8);line(-10,3,2,3,C.mint,2.8);
+    ctx.strokeStyle=C.mint;ctx.lineWidth=3;ctx.lineCap='round';ctx.lineJoin='round';
+    ctx.beginPath();ctx.moveTo(1,11);ctx.lineTo(7,17);ctx.lineTo(18,5);ctx.stroke();ctx.restore();
+  }
+  function background(t) {
+    ctx.setTransform(CONFIG.width/W,0,0,CONFIG.height/H,0,0);
+    ctx.globalAlpha=1;ctx.fillStyle=C.bg;ctx.fillRect(0,0,W,H);
+    const breathe=.5+.5*Math.sin(t*.34);
+    glow(440+22*Math.sin(t*.21),280,520,'#244a4a',.18+breathe*.025);
+    glow(1550,790+16*Math.sin(t*.17),490,'#273656',.17);
+    ctx.save();ctx.strokeStyle='rgba(142,169,185,.055)';ctx.lineWidth=1;
+    for(let x=80;x<W;x+=80){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=60;y<H;y+=80){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    ctx.restore();
+    for(let i=0;i<88;i++){
+      const x=hash(i+2)*W, y=hash(i+900)*H;
+      const pulse=.35+.65*(.5+.5*Math.sin(t*(.4+hash(i)*.7)+i));
+      ctx.fillStyle=`rgba(174,205,214,${.12*pulse})`;
+      ctx.beginPath();ctx.arc(x,y,.7+hash(i+120)*.8,0,Math.PI*2);ctx.fill();
+    }
+    const vignette=ctx.createRadialGradient(W/2,H/2,220,W/2,H/2,1080);
+    vignette.addColorStop(0,'rgba(1,4,8,0)');vignette.addColorStop(1,'rgba(1,4,8,.48)');
+    ctx.fillStyle=vignette;ctx.fillRect(0,0,W,H);
+  }
+  function brandHeader(section,step) {
+    logoMark(1644,83,42,.92);
+    text('انتخاب واحد',1602,83,19,C.text,{weight:600});
+    text(section,278,82,14,C.muted,{align:'left',direction:'ltr',weight:500});
+    rounded(278,111,1364,2,1,'#1b2630',null);
+    rounded(278,111,1364*clamp(step/7),2,1,C.mint,null);
+  }
+  function titleBlock(kicker,title,subtitle) {
+    text(kicker,1645,169,15,C.mint,{weight:600});
+    text(title,1645,221,39,C.text,{weight:600});
+    text(subtitle,1645,267,17,C.muted,{weight:400});
+  }
+  function courseCard(x,y,w,h,item,opts={}) {
+    const p=clamp(opts.p===undefined?1:opts.p);
+    if(p<=0)return;
+    ctx.save();ctx.globalAlpha*=p;
+    const lift=(1-easeOutBack(p))*22;
+    ctx.translate(opts.dx||0,lift);
+    rounded(x,y,w,h,18,opts.selected?'#142b2b':'#121b26',opts.selected?'#477266':C.line,opts.selected?1.4:1);
+    rounded(x+w-58,y+22,34,34,11,opts.selected?'#214b42':'#1b2733',null);
+    text(item.code,x+w-75,y+39,11,opts.selected?C.mint:C.muted,{align:'center',direction:'ltr',weight:600});
+    text(item.name,x+w-80,y+35,19,C.text,{weight:600});
+    text(item.meta,x+w-80,y+68,14,C.muted,{weight:400});
+    line(x+26,y+h-37,x+w-26,y+h-37,'#26333f',1);
+    const accent=opts.selected?C.mint:C.blue;
+    pill(x+24,y+h-30,90,`${item.units} واحد`,{h:25,size:12,color:accent,fill:'#17242b',stroke:'#30464b'});
+    text(item.time,x+135,y+h-18,13,C.muted,{align:'left',direction:'rtl'});
+    text(`ظرفیت ${item.capacity}`,x+w-26,y+h-18,12,C.quiet,{weight:400});
+    if(opts.selected){
+      const s=easeOutBack(p);
+      rounded(x+18,y+17,25,25,8,'#214c43',null);
+      ctx.save();ctx.translate(x+30.5,y+29.5);ctx.scale(s,s);ctx.strokeStyle=C.mint;ctx.lineWidth=2.3;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(-5,0);ctx.lineTo(-1,4);ctx.lineTo(6,-5);ctx.stroke();ctx.restore();
+    }
+    ctx.restore();
+  }
+  const courses=[
+    {code:'کد ۲۴۱',name:'ساختمان داده',meta:'دکتر نادری  •  کارشناسی',units:3,time:'شنبه و دوشنبه  •  ۰۸:۰۰',capacity:'۸ / ۳۲'},
+    {code:'کد ۱۳۰',name:'ریاضی عمومی ۲',meta:'مهندس شریفی  •  کارشناسی',units:3,time:'یکشنبه و سه‌شنبه  •  ۱۰:۰۰',capacity:'۱۲ / ۴۰'},
+    {code:'کد ۳۱۵',name:'مدارهای الکتریکی',meta:'دکتر کاویانی  •  کارشناسی',units:3,time:'شنبه و چهارشنبه  •  ۱۲:۰۰',capacity:'۵ / ۲۸'},
+    {code:'کد ۴۰۲',name:'آزمایشگاه فیزیک',meta:'مهندس احمدی  •  عملی',units:2,time:'چهارشنبه  •  ۱۴:۰۰',capacity:'۳ / ۲۰'}
+  ];
+  function drawOpening(t) {
+    const p=clamp(t/2.1), cx=960, cy=385;
+    const reveal=easeOutExpo(p);
+    glow(cx,cy,390,'#376f64',.22*reveal);
+    for(let i=0;i<58;i++){
+      const a=i*2.399963+Math.sin(t*.5+i)*.05;
+      const r=62+hash(i+10)*220+(1-reveal)*100;
+      const px=cx+Math.cos(a)*r,py=cy+Math.sin(a)*r*.7;
+      const op=reveal*(.24+.42*(.5+.5*Math.sin(t*1.7+i)));
+      ctx.fillStyle=`rgba(141,219,199,${op})`;ctx.beginPath();ctx.arc(px,py,1+hash(i+75)*2,0,Math.PI*2);ctx.fill();
+      if(i%7===0){line(cx+Math.cos(a)*75,cy+Math.sin(a)*55,px,py,'#76cdb5',.7,op*.45);}
+    }
+    const ring=88+Math.sin(t*1.8)*3;
+    ctx.save();ctx.globalAlpha*=reveal*.58;ctx.strokeStyle='#5ba994';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(cx,cy,ring,-.8,4.75);ctx.stroke();ctx.restore();
+    ctx.save();ctx.translate(cx,cy);ctx.scale(.65+.35*easeOutBack(p),.65+.35*easeOutBack(p));
+    logoMark(0,0,112,reveal);ctx.restore();
+    text('ترمِ تو، منظم‌تر',960,582,56,C.text,{align:'center',weight:600,alpha:reveal,shadow:'rgba(73,191,164,.22)',blur:30});
+    text('SMART COURSE SELECTION',960,638,15,C.muted,{align:'center',direction:'ltr',weight:600,alpha:reveal});
+    const dash=smooth(.75,1.8,t);
+    rounded(840,693,240,2,1,'#24323b',null);rounded(840,693,240*dash,2,1,C.mint,null);
+    text('DISCOVER  ·  SELECT  ·  OPTIMIZE',960,733,12,C.quiet,{align:'center',direction:'ltr',alpha:reveal});
+  }
+  function drawFilterPanel(x,y,w,h,t) {
+    rounded(x,y,w,h,20,'#111a24','#273542',1);
+    text('فیلترهای هوشمند',x+w-28,y+31,17,C.text,{weight:600});
+    text('نتیجهٔ انتخابی را محدود کن',x+w-28,y+61,12,C.muted);
+    line(x+22,y+87,x+w-22,y+87,'#273542');
+    text('رشته',x+w-28,y+121,12,C.muted);
+    rounded(x+22,y+141,w-44,46,12,'#0d151e','#273543');
+    text('مهندسی کامپیوتر',x+w-40,y+164,14,C.text);
+    text('⌄',x+40,y+164,18,C.muted,{align:'left',direction:'ltr'});
+    text('تعداد واحد',x+w-28,y+222,12,C.muted);
+    const selected=t>3.3;
+    pill(x+w-113,y+241,83,'۳ واحد',{h:35,size:13,color:selected?C.mint:C.muted,fill:selected?'#17312e':'#17212c',stroke:selected?'#31574f':'#2a3744'});
+    pill(x+25,y+241,76,'همه',{h:35,size:13,color:C.muted});
+    text('روزهای آزاد',x+w-28,y+316,12,C.muted);
+    const days=['شنبه','دوشنبه','چهارشنبه'];
+    days.forEach((d,i)=>{
+      const yy=y+343+i*42, on=(i===0&&t>3.75)||(i===1&&t>4.05);
+      rounded(x+w-47,yy-10,18,18,5,on?'#22483f':'#18232d',on?'#568977':'#344351',1);
+      if(on){ctx.strokeStyle=C.mint;ctx.lineWidth=1.7;ctx.beginPath();ctx.moveTo(x+w-43,yy);ctx.lineTo(x+w-39,yy+4);ctx.lineTo(x+w-33,yy-5);ctx.stroke();}
+      text(d,x+w-60,yy,13,on?C.text:C.muted);
+    });
+    const n=t>4.3?'۲۴ درس':'۸۶ درس';
+    pill(x+24,y+h-57,w-48,n,{h:36,size:13,color:C.mint,fill:'#142522',stroke:'#2e5147',dot:C.mint});
+  }
+  function drawDiscovery(t) {
+    brandHeader('01 / COURSE DISCOVERY',2);
+    titleBlock('کشف درس','درس مناسب را، سریع‌تر پیدا کن','فهرست درس‌ها را با رشته، واحد و زمان دلخواهت پالایش کن.');
+    const px=255,py=315,pw=1410,ph=620;
+    rounded(px,py,pw,ph,25,'rgba(15,23,32,.93)','#283746',1);
+    rounded(px+23,py+22,pw-46,58,15,'#0c141d','#253340',1);
+    text('جست‌وجوی نام درس، استاد یا کد…',px+pw-52,py+51,14,C.quiet);
+    rounded(px+pw-47,py+36,31,31,9,'#17242e',null);
+    text('⌕',px+pw-31,py+52,22,C.muted,{align:'center',direction:'ltr'});
+    pill(px+26,py+31,97,t>3.8?'۲۴ درس':'همهٔ درس‌ها',{h:39,size:12,color:C.muted});
+    const listX=px+31,listW=912,cardH=118;
+    const available=t<3.3?4:t<4.15?3:2;
+    const items=[...courses].slice(0,available);
+    items.forEach((item,i)=>{
+      const enter=clamp((t-(2.17+i*.12))/.32);
+      courseCard(listX,py+105+i*126,listW,cardH,item,{p:easeOutBack(enter),dx:(1-easeOutCubic(enter))*36});
+    });
+    drawFilterPanel(px+980,py+103,400,497,t);
+    pill(px+34,py+ph-43,160,'مرتب‌سازی: مرتبط‌ترین',{h:28,size:11,color:C.quiet,fill:'#101820',stroke:'#253340'});
+    text('نتایج بر اساس برنامهٔ ترم',px+pw-32,py+ph-29,12,C.quiet);
+  }
+  function drawSelection(t) {
+    brandHeader('02 / BUILD YOUR PLAN',3);
+    titleBlock('انتخاب درس','ترمت را قدم‌به‌قدم بساز','هر انتخاب، واحدها و ظرفیت باقی‌مانده را همان لحظه به‌روز می‌کند.');
+    const cardX=286,cardW=834,cardH=126;
+    const selected=[courses[0],courses[1],courses[2]];
+    selected.forEach((item,i)=>{
+      const start=5.08+i*.44, p=clamp((t-start)/.35);
+      courseCard(cardX,340+i*147,cardW,cardH,item,{p:easeOutBack(p),selected:true});
+      if(p>.55){
+        const s=easeOutBack((p-.55)/.45);
+        ctx.save();ctx.globalAlpha*=clamp(s);rounded(1050,355+i*147,86,30,15,'#1c352f','#34574c',1);text('انتخاب شد',1093,370+i*147,11,C.mint,{align:'center'});ctx.restore();
+      }
+    });
+    const x=1214,y=355,w=405,h=475;
+    rounded(x,y,w,h,24,'#111b25','#2b3b49',1);
+    text('جمع واحدها',x+w-30,y+44,15,C.muted);
+    const p=clamp((t-5.08)/2.1);
+    let units=12;
+    if(p<.3)units=mix(12,14,easeOutCubic(p/.3));
+    else if(p<.66)units=mix(14,17,easeOutCubic((p-.3)/.36));
+    else units=mix(17,19,easeOutCubic((p-.66)/.34));
+    const count=Math.round(units).toLocaleString('fa-IR');
+    text(count,x+w-30,y+143,100,C.text,{weight:500});
+    text('واحد',x+33,y+145,19,C.muted,{align:'left'});
+    rounded(x+30,y+190,w-60,5,3,'#263542',null);rounded(x+30,y+190,(w-60)*clamp((units-12)/7),5,3,C.mint,null);
+    text('از سقف ۲۲ واحد',x+w-30,y+225,13,C.muted);
+    line(x+28,y+265,x+w-28,y+265,'#283744');
+    const summary=[['درس‌های انتخاب‌شده',`${Math.round(mix(4,6,easeOutCubic(p))).toLocaleString('fa-IR')} درس`],['ظرفیت در دسترس','۳۲ جای خالی'],['تداخل ثبت‌شده','۰ مورد']];
+    summary.forEach((row,i)=>{
+      text(row[0],x+w-30,y+302+i*48,13,C.muted);
+      text(row[1],x+30,y+302+i*48,13,i===2?C.mint:C.text,{align:'left'});
+    });
+    pill(x+28,y+h-63,w-56,'ادامه به بررسی برنامه',{h:42,size:13,color:C.mint,fill:'#173029',stroke:'#31574a',dot:C.mint});
+    glow(1415,490,280,'#286455',.1);
+  }
+  function drawTimetable(x,y,w,h,mode='conflict',p=0) {
+    rounded(x,y,w,h,20,'#0f1822','#263542',1);
+    const timeW=80,headH=57,cols=5,rows=6,colW=(w-timeW-22)/cols,rowH=(h-headH-26)/rows;
+    const days=['شنبه','یکشنبه','دوشنبه','سه‌شنبه','چهارشنبه'];
+    const hours=['۰۸:۰۰','۰۹:۳۰','۱۱:۰۰','۱۲:۳۰','۱۴:۰۰','۱۵:۳۰'];
+    text('ساعت',x+w-21,y+29,12,C.quiet);
+    for(let i=0;i<cols;i++){
+      const colX=x+timeW+(cols-1-i)*colW;
+      text(days[i],colX+colW/2,y+29,14,C.muted,{align:'center'});
+      line(colX,y+headH,colX,y+h-16,'#263542',1,.7);
+    }
+    for(let r=0;r<rows;r++){
+      const yy=y+headH+r*rowH;
+      text(hours[r],x+w-19,yy+rowH/2,11,C.quiet);
+      line(x+14,yy,x+w-14,yy,'#253340',1,.8);
+    }
+    const slot=(day,row,name,color,sub='')=>{
+      const colX=x+timeW+(cols-1-day)*colW;
+      const xx=colX+5, yy=y+headH+row*rowH+4, ww=colW-10, hh=rowH-8;
+      rounded(xx,yy,ww,hh,9,`${color}20`,color,1);
+      text(name,xx+ww-8,yy+hh*.4,12,C.text,{weight:600});
+      text(sub,xx+ww-8,yy+hh*.72,10,C.muted);
+    };
+    if(mode==='conflict'){
+      slot(0,0,'ساختمان داده',C.mint,'گروه ۰۱');
+      const colX=x+timeW+(cols-1-3)*colW,xx=colX+4,yy=y+headH+1*rowH+4,ww=colW-8,hh=rowH-8;
+      const offset=14;
+      const resolved=easeOutCubic(clamp((p-.65)/.2));
+      ctx.save();ctx.globalAlpha*=1-resolved;
+      rounded(xx,yy,ww,hh,9,'#3b2727',C.red,1.5);
+      text('ریاضی عمومی ۲',xx+ww-8,yy+hh*.4,11,C.text,{weight:600});
+      text('۱۰:۰۰ • گروه ۰۱',xx+ww-8,yy+hh*.72,9,C.red);ctx.restore();
+      const move=easeInOutCubic(clamp((p-.25)/.5));
+      const startX=xx-offset,startY=yy+offset;
+      const endColX=x+timeW+(cols-1-4)*colW,endX=endColX+5,endY=y+headH+rowH+4;
+      const movedX=mix(startX,endX,move),movedY=mix(startY,endY,move);
+      ctx.save();ctx.globalAlpha*=.72*(1-resolved*.72);
+      rounded(movedX,movedY,ww,hh,9,move>.8?'#19312c':'#332c20',move>.8?C.mint:C.amber,1.2);
+      text('مدارهای الکتریکی',movedX+ww-8,movedY+hh*.4,11,C.text,{weight:600});text(move>.8?'چهارشنبه ۱۰:۰۰':'۱۰:۰۰ • گروه ۰۲',movedX+ww-8,movedY+hh*.72,9,move>.8?C.mint:C.amber);ctx.restore();
+      if(resolved>.1){
+        ctx.save();ctx.globalAlpha*=resolved;
+        rounded(endX,endY,ww,hh,9,'#18312c',C.mint,1.3);text('مدارهای الکتریکی',endX+ww-8,endY+hh*.4,11,C.text,{weight:600});text('چهارشنبه ۱۰:۰۰',endX+ww-8,endY+hh*.72,9,C.mint);ctx.restore();
+      }
+      slot(4,4,'آزمایشگاه فیزیک',C.blue,'گروه ۰۱');
+      if(p>.48){
+        const a=easeOutCubic((p-.48)/.52);
+        ctx.save();ctx.globalAlpha*=a;
+        rounded(x+20,y+h+20,w*.64,53,15,'#1a2b28','#426353',1);
+        pill(x+33,y+h+28,128,'پیشنهاد جایگزین',{h:34,size:11,color:C.mint,fill:'#18342d',stroke:'#33564a'});
+        text('گروه ۰۲  •  چهارشنبه ۱۰:۰۰  ·  بدون تداخل',x+w*.64,y+h+46,12,C.text);
+        ctx.save();ctx.globalAlpha*=1-resolved;
+        rounded(x+w-51,y+headH+rowH+6,26,26,13,'#472d2c','#a65f58',1);
+        text('!',x+w-38,y+headH+rowH+19,14,C.red,{align:'center',weight:700});ctx.restore();
+        if(resolved>.1){
+          ctx.save();ctx.globalAlpha*=resolved;
+          rounded(x+w-51,y+headH+rowH+6,26,26,13,'#1e453a','#3d715b',1);
+          text('✓',x+w-38,y+headH+rowH+19,13,C.mint,{align:'center',weight:700});ctx.restore();
+        }
+        ctx.restore();
+      }
+    } else {
+      slot(0,0,'ساختمان داده',C.mint,'۰۸:۰۰ – ۰۹:۳۰');
+      slot(1,2,'ریاضی عمومی ۲',C.blue,'۱۰:۰۰ – ۱۱:۳۰');
+      slot(2,1,'مدارهای الکتریکی',C.mint,'۰۹:۳۰ – ۱۱:۰۰');
+      slot(3,3,'آزمایشگاه فیزیک',C.blue,'۱۲:۳۰ – ۱۴:۰۰');
+      slot(4,0,'پایگاه داده',C.mint,'۰۸:۰۰ – ۰۹:۳۰');
+      slot(4,4,'حل تمرین ریاضی',C.amber,'۱۴:۰۰ – ۱۵:۳۰');
+      slot(0,3,'زبان تخصصی',C.blue,'۱۲:۳۰ – ۱۴:۰۰');
+    }
+  }
+  function drawConflict(t) {
+    brandHeader('03 / VALIDATION',4);
+    titleBlock('اعتبارسنجی','تداخل‌ها، پیش از ثبت','زمان هر گروه با برنامهٔ هفتگی تو سنجیده می‌شود.');
+    const p=clamp((t-7.5)/2.5);
+    drawTimetable(300,335,1320,505,'conflict',p);
+    const alertP=easeOutBack(clamp((t-7.85)/.38));
+    const resolved=clamp((p-.65)/.2);
+    ctx.save();ctx.globalAlpha*=alertP;
+    rounded(1210,846,410,70,18,resolved>.8?'#182a26':'#251d20',resolved>.8?'#3c6253':'#69413e',1);
+    rounded(1568,864,34,34,11,resolved>.8?'#21483e':'#472d2c',null);
+    text(resolved>.8?'✓':'!',1585,881,20,resolved>.8?C.mint:C.red,{align:'center',weight:700});
+    text(resolved>.8?'برنامه بدون تداخل شد':'تداخل هم‌زمان شناسایی شد',1549,865,15,C.text,{weight:600});
+    text(resolved>.8?'گروه جایگزین  ·  چهارشنبه ۱۰:۰۰':'سه‌شنبه ۱۰:۰۰  ·  دو درس، یک بازه',1549,891,12,resolved>.8?C.mint:C.muted);ctx.restore();
+    text(p>.78?'گروه مدارها به چهارشنبه منتقل شد.':'یک گروه جایگزین انتخاب کن تا برنامه معتبر بماند.',300,881,13,C.muted);
+  }
+  function drawMiniCandidate(x,y,w,h,kind,phase,chosen=false) {
+    const selected=kind==='valid';
+    const entrance=selected?easeOutBack(clamp((phase-(chosen?.48:.1))/(chosen?.48:.38))):1;
+    const alpha=kind==='invalid'?1-phase*.92:clamp(entrance);
+    const lift=kind==='invalid'?phase*55:0;
+    const cardScale=selected?mix(.92,1,clamp(entrance)):1;
+    ctx.save();ctx.globalAlpha*=alpha;ctx.translate(x+w/2,y+h/2);ctx.scale(cardScale,cardScale);ctx.translate(-x-w/2,-y-h/2);ctx.translate(0,lift);
+    if(chosen){ctx.shadowColor='rgba(123,226,194,.22)';ctx.shadowBlur=36;}
+    rounded(x,y,w,h,20,chosen?'#142622':'#111a24',chosen?'#568475':'#2a3947',chosen?1.6:1);
+    ctx.shadowBlur=0;
+    text(kind==='invalid'?'نامعتبر':chosen?'بهینه‌ترین ترکیب':'برنامهٔ پیشنهادی',x+w-22,y+31,14,chosen?C.mint:C.text,{weight:600});
+    text(kind==='invalid'?'تداخل ۲ بازه':`امتیاز سازگاری  ${chosen?'۹۶':'۸۴'}`,x+w-22,y+58,11,kind==='invalid'?C.red:C.muted);
+    const gx=x+20,gy=y+86,gw=w-40,gh=h-110,days=5,col=gw/days;
+    for(let i=0;i<=days;i++)line(gx+i*col,gy,gx+i*col,gy+gh,'#263440',1,.7);
+    for(let i=0;i<4;i++)line(gx,gy+i*gh/3,gx+gw,gy+i*gh/3,'#263440',1,.7);
+    const blocks=selected?[[0,0,C.mint],[1,1,C.blue],[2,0,C.mint],[3,2,C.blue],[4,1,C.mint],[0,2,C.blue]]:[[0,0,C.blue],[1,0,C.blue],[1,1,C.red],[2,1,C.blue],[3,2,C.amber]];
+    blocks.forEach(([d,r,colr],i)=>{
+      const bx=gx+d*col+3,by=gy+r*gh/3+3;
+      rounded(bx,by,col-6,gh/3-6,5,`${colr}38`,`${colr}99`,.8);
+    });
+    if(chosen){
+      const check=clamp((phase-.74)/.24);
+      rounded(x+w-101,y+h-33,79,22,11,'#20483e','#3f715f',check);
+      text('بی‌تداخل ✓',x+w-61,y+h-22,10,C.mint,{align:'center',weight:600,alpha:check});
+    }
+    ctx.restore();
+  }
+  function drawGenerate(t) {
+    brandHeader('04 / SCHEDULE ENGINE',5);
+    titleBlock('ساخت برنامه','از میان حالت‌ها، بهترین را پیدا کن','ترکیب واحدها، زمان‌ها و روزهای آزاد در چند گام بررسی می‌شود.');
+    const p=clamp((t-10)/3);
+    const cx=960,cy=612;
+    for(let i=0;i<24;i++){
+      const a=i*2.399963+t*.32,r=90+hash(i+5)*560;
+      const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r*.48;
+      const op=.1+.16*(.5+.5*Math.sin(t*3+i));
+      ctx.fillStyle=`rgba(113,212,187,${op})`;ctx.beginPath();ctx.arc(x,y,1+hash(i+31)*1.6,0,Math.PI*2);ctx.fill();
+      if(i%4===0)line(cx,cy,x,y,C.mint,.6,op*.45);
+    }
+    const travel=clamp(p/.25);
+    drawMiniCandidate(318,420,402,304,'invalid',p,false);
+    drawMiniCandidate(758,390,402,334,'valid',p,false);
+    drawMiniCandidate(1200,420,402,304,'valid',p,true);
+    const searched=Math.round(mix(0,128,easeOutCubic(p))).toLocaleString('fa-IR');
+    const counterAlpha=easeOutCubic(clamp(p/.16));
+    ctx.save();ctx.globalAlpha*=counterAlpha;
+    pill(765,788,390,`بررسی ${searched} ترکیب ممکن`,{h:46,size:14,color:C.muted,fill:'#111a24',stroke:'#2b3b48',dot:C.mint});
+    rounded(675,856,610,4,2,'#24333e',null);rounded(675,856,610*easeInOutCubic(p),2,C.mint,null);
+    ctx.restore();
+    if(p>.73){
+      const a=easeOutCubic((p-.73)/.27);
+      text('ترکیب معتبر آماده است',960,902,14,C.mint,{align:'center',alpha:a,weight:600});
+    }
+    glow(960,565,470,'#234a43',.11*travel);
+  }
+  function drawFinal(t) {
+    brandHeader('05 / YOUR SEMESTER',6);
+    titleBlock('برنامهٔ نهایی','یک هفتهٔ روشن، بدون تداخل','درس‌ها و زمان‌ها، یک‌جا و آمادهٔ انتخاب واحد.');
+    const p=clamp((t-13)/3);
+    ctx.save();ctx.globalAlpha*=easeOutCubic(p);
+    drawTimetable(270,320,1035,544,'final',p);
+    const x=1340,y=320,w=300,h=544;
+    rounded(x,y,w,h,22,'#111b25','#293b47',1);
+    text('خلاصهٔ ترم',x+w-24,y+34,16,C.text,{weight:600});
+    line(x+22,y+67,x+w-22,y+67,'#283642');
+    const stats=[
+      {label:'واحدها',value:'۱۷',color:C.mint},
+      {label:'روزهای حضور',value:'۴',color:C.blue},
+      {label:'تداخل‌ها',value:'۰',color:C.green}
+    ];
+    stats.forEach((s,i)=>{
+      const yy=y+129+i*116;
+      text(s.label,x+w-25,yy-15,12,C.muted);
+      text(s.value,x+w-25,yy+28,47,C.text,{weight:500});
+      rounded(x+w-27,yy+58,7,7,4,s.color,null);
+      line(x+22,yy+83,x+w-22,yy+83,'#263440',1,.8);
+    });
+    pill(x+22,y+h-75,w-44,'برنامه معتبر است',{h:43,size:13,color:C.mint,fill:'#173029',stroke:'#31594a',dot:C.mint});
+    ctx.restore();
+    const sweep=clamp((t-14.05)/.48);
+    if(sweep>0&&sweep<1){
+      const yy=345+sweep*495;line(292,yy,1282,yy,'#b1f0d9',1.4,(1-sweep)*.36);
+    }
+  }
+  function drawOutro(t) {
+    const p=clamp((t-16)/2),pull=easeInOutCubic(p);
+    const cameraScale=mix(1,.9,pull);
+    ctx.save();ctx.translate(W/2,H/2);ctx.scale(cameraScale,cameraScale);ctx.translate(-W/2,-H/2);
+    glow(960,455,520,'#315d55',.2);
+    for(let i=0;i<36;i++){
+      const a=i*2.399963, r=140+hash(i+14)*390;
+      const px=960+Math.cos(a)*r,py=440+Math.sin(a)*r*.63;
+      ctx.fillStyle=`rgba(129,218,194,${.12*(.45+.55*Math.sin(t+i))})`;
+      ctx.beginPath();ctx.arc(px,py,1.2+hash(i+45),0,Math.PI*2);ctx.fill();
+    }
+    logoMark(960,369,104,easeOutBack(p));
+    text('ترمت را هوشمند بچین',960,493,51,C.text,{align:'center',weight:600});
+    text('انتخاب درس  ·  بررسی تداخل  ·  برنامهٔ تو',960,551,17,C.muted,{align:'center'});
+    rounded(815,624,290,56,17,'#17332d','#396452',1);
+    text('انتخاب واحد، با دیدی کامل',960,652,15,C.mint,{align:'center',weight:600});
+    // The closing lockup settles by 17.45s and holds cleanly to the final frame.
+    text('COURSE SELECTION  /  ۱۴۰۶',960,724,11,C.quiet,{align:'center',direction:'ltr',alpha:easeOutCubic(p)});
+    ctx.restore();
+  }
+  const SCENES=[
+    {start:0,end:2.1,draw:drawOpening},
+    {start:2,end:5,draw:drawDiscovery},
+    {start:5,end:7.5,draw:drawSelection},
+    {start:7.5,end:10,draw:drawConflict},
+    {start:10,end:13,draw:drawGenerate},
+    {start:13,end:16,draw:drawFinal},
+    {start:16,end:18,draw:drawOutro}
+  ];
+  function renderFrame(t) {
+    const time=clamp(Number(t)||0,0,CONFIG.duration);
+    background(time);
+    for(const scene of SCENES){
+      if(time<scene.start||time>scene.end)continue;
+      const enter=easeOutCubic(clamp((time-scene.start)/.17));
+      const leave=scene===SCENES[SCENES.length-1]?0:easeInBack(clamp((time-(scene.end-.16))/.16));
+      ctx.save();ctx.globalAlpha*=Math.max(0,enter*(1-leave));
+      scene.draw(time);ctx.restore();
+    }
+  }
+  window.CONFIG=CONFIG;
+  window.renderFrame=renderFrame;
+  window.easing=Object.freeze({easeOutExpo,easeOutCubic,easeInOutCubic,easeOutBack,easeOutElastic,easeInBack});
+  const previewTime=Number(new URLSearchParams(location.search).get('t'));
+  renderFrame(Number.isFinite(previewTime)?previewTime:0);
+})();
+</script>
+</body>
+</html>

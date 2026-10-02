@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      PropertyEscape cannot represent Windows paths that contain '!' (e.g. user
+      names like "AM!R"): it round-trips '\!' to '\!\!' on every pass, so the
+      suggested "fix" never converges and breaks the real path for AGP. The
+      current local.properties form parses correctly with java.util.Properties,
+      so the check is disabled for that file only.
+    -->
+    <issue id="PropertyEscape">
+        <ignore regexp=".*local\.properties" />
+    </issue>
+</lint>

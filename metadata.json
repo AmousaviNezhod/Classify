@@ -1,0 +1,6 @@
+{
+  "name": "UniSchedule",
+  "description": "Native Android app for downloading, parsing, caching, and comparing university class schedule PDFs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

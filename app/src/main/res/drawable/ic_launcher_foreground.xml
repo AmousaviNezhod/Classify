@@ -1,0 +1,41 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Graduation Cap Top -->
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M54,28 L78,38 L54,48 L30,38 Z" />
+    <path
+        android:fillColor="#E2E8F0"
+        android:pathData="M38,43 L38,51 C38,56 45,60 54,60 C63,60 70,56 70,51 L70,43 L54,49.5 Z" />
+    <!-- Tassel -->
+    <path
+        android:fillColor="#FBBF24"
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="1"
+        android:pathData="M72,39 L74,54 C74,56 72,57 71,57 C70,57 69,56 69,54 L71,39" />
+
+    <!-- Timetable Board / Calendar Card -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,60 C32,58.8 32.9,57.9 34.1,57.9 L73.9,57.9 C75.1,57.9 76,58.8 76,60 L76,82 C76,84.2 74.2,86 72,86 L36,86 C33.8,86 32,84.2 32,82 Z" />
+    <!-- Card header bar -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M32,60 L76,60 L76,66 L32,66 Z" />
+    <!-- Card schedule slot rows -->
+    <path
+        android:fillColor="#93C5FD"
+        android:pathData="M36,70 L52,70 L52,73 L36,73 Z" />
+    <path
+        android:fillColor="#CBD5E1"
+        android:pathData="M56,70 L72,70 L72,73 L56,73 Z" />
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M36,76 L48,76 L48,79 L36,79 Z" />
+    <path
+        android:fillColor="#CBD5E1"
+        android:pathData="M52,76 L72,76 L72,79 L52,79 Z" />
+</vector>
