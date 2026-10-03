@@ -16,8 +16,15 @@ import com.example.domain.model.NormalizedSchedule
 import com.example.domain.model.ScheduleClass
 import com.example.domain.model.ScheduleOfferingIdentity
 import com.example.domain.model.ScheduleComparisonSummary
+import com.example.domain.model.CourseEvent
+import com.example.domain.model.CourseTask
+import com.example.domain.model.CourseNote
+import com.example.domain.manager.BackupAndImportManager
+import com.example.domain.manager.FullBackupData
+import com.example.widget.ScheduleWidgetProvider
 import com.example.domain.parser.JsonScheduleParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -91,6 +98,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = "SYSTEM"
+        )
+
+    val allEvents: StateFlow<List<CourseEvent>> = repository.allEventsFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val allTasks: StateFlow<List<CourseTask>> = repository.allTasksFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
         )
 
     private val _selectedDayIndex = MutableStateFlow<Int?>(null) // null = all days
@@ -243,8 +264,209 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.setInputJson(JsonScheduleParser.toUnitSelectionJson(scheduleToSave))
                 repository.showSuccessMessage("درس‌های من به‌روز شد.")
             }
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
             loadComparison()
         }
+    }
+
+    // ----------------------------------------------------
+    // EVENTS, TASKS & NOTES OPERATIONS
+    // ----------------------------------------------------
+
+    fun eventsForCourse(courseKey: String): Flow<List<CourseEvent>> = repository.eventsForCourseFlow(courseKey)
+
+    fun tasksForCourse(courseKey: String): Flow<List<CourseTask>> = repository.tasksForCourseFlow(courseKey)
+
+    fun notesForCourse(courseKey: String): Flow<List<CourseNote>> = repository.notesForCourseFlow(courseKey)
+
+    fun upsertEvent(event: CourseEvent) {
+        viewModelScope.launch {
+            repository.upsertEvent(event)
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
+        }
+    }
+
+    fun deleteEvent(eventId: String) {
+        viewModelScope.launch {
+            repository.deleteEvent(eventId)
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
+        }
+    }
+
+    fun toggleEventCompleted(event: CourseEvent) {
+        viewModelScope.launch {
+            repository.toggleEventCompleted(event)
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
+        }
+    }
+
+    fun upsertTask(task: CourseTask) {
+        viewModelScope.launch {
+            repository.upsertTask(task)
+        }
+    }
+
+    fun deleteTask(taskId: String) {
+        viewModelScope.launch {
+            repository.deleteTask(taskId)
+        }
+    }
+
+    fun toggleTaskDone(task: CourseTask) {
+        viewModelScope.launch {
+            repository.toggleTaskDone(task)
+        }
+    }
+
+    fun upsertNote(note: CourseNote) {
+        viewModelScope.launch {
+            repository.upsertNote(note)
+        }
+    }
+
+    fun deleteNote(noteId: String) {
+        viewModelScope.launch {
+            repository.deleteNote(noteId)
+        }
+    }
+
+    fun deleteCourseCascade(courseKey: String) {
+        viewModelScope.launch {
+            repository.deleteCourseCascade(courseKey)
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
+            loadComparison()
+        }
+    }
+
+    // ----------------------------------------------------
+    // EXPORT / IMPORT / BACKUP
+    // ----------------------------------------------------
+
+    fun exportEventsJson(): String {
+        return BackupAndImportManager.exportEventsJson(allEvents.value)
+    }
+
+    fun exportScheduleJson(): String {
+        return inputJson.value.ifBlank {
+            mySchedule.value?.let { JsonScheduleParser.toUnitSelectionJson(it) } ?: ""
+        }
+    }
+
+    fun importEventsFromJson(json: String, createMissingCourses: Boolean = false, onFinished: (imported: Int, unmatched: Int) -> Unit) {
+        viewModelScope.launch {
+            val parseResult = BackupAndImportManager.parseEventsJson(json)
+            val parsedEvents = parseResult.getOrNull()
+            if (parseResult.isFailure || parsedEvents.isNullOrEmpty()) {
+                repository.showErrorMessage("فایل رویدادها نامعتبر است یا رویدادی یافت نشد.")
+                onFinished(0, 0)
+                return@launch
+            }
+
+            val currentCourses = mySchedule.value?.classes.orEmpty()
+            val courseMap = currentCourses.associateBy { it.semanticKey }
+
+            var importedCount = 0
+            var unmatchedCount = 0
+            val eventsToInsert = mutableListOf<CourseEvent>()
+            val coursesToCreate = mutableListOf<ScheduleClass>()
+
+            for (event in parsedEvents) {
+                // Try matching by courseKey, or courseName
+                val matchedCourse = courseMap[event.courseKey]
+                    ?: currentCourses.firstOrNull { it.courseName.trim().equals(event.courseName.trim(), ignoreCase = true) }
+
+                if (matchedCourse != null) {
+                    eventsToInsert.add(event.copy(
+                        courseKey = matchedCourse.semanticKey,
+                        courseName = matchedCourse.courseName,
+                        courseCode = matchedCourse.courseCode.ifBlank { event.courseCode }
+                    ))
+                    importedCount++
+                } else if (createMissingCourses && event.courseName.isNotBlank()) {
+                    val newClass = ScheduleClass(
+                        courseName = event.courseName,
+                        courseCode = event.courseCode,
+                        dayOfWeek = "شنبه",
+                        startTime = "08:00",
+                        endTime = "10:00"
+                    )
+                    coursesToCreate.add(newClass)
+                    eventsToInsert.add(event.copy(courseKey = newClass.semanticKey))
+                    importedCount++
+                } else {
+                    unmatchedCount++
+                }
+            }
+
+            if (coursesToCreate.isNotEmpty()) {
+                val updatedCourses = currentCourses + coursesToCreate
+                saveCourseOfferings(updatedCourses)
+            }
+
+            if (eventsToInsert.isNotEmpty()) {
+                repository.insertImportedEvents(eventsToInsert)
+                repository.showSuccessMessage("$importedCount رویداد با موفقیت وارد شد.")
+            } else if (unmatchedCount > 0) {
+                repository.showErrorMessage("$unmatchedCount رویداد مربوط به درس‌هایی بود که در برنامهٔ شما وجود ندارند.")
+            }
+
+            onFinished(importedCount, unmatchedCount)
+        }
+    }
+
+    suspend fun createFullBackup(): String {
+        val notes = repository.getAllNotesDirect()
+        return BackupAndImportManager.createFullBackup(
+            sourceUrl = sourceUrl.value,
+            themeMode = themeMode.value,
+            inputScheduleJson = inputJson.value,
+            events = allEvents.value,
+            tasks = allTasks.value,
+            notes = notes
+        )
+    }
+
+    fun restoreFullBackup(json: String, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val result = BackupAndImportManager.parseFullBackup(json)
+            val data = result.getOrNull()
+            if (data == null) {
+                repository.showErrorMessage("فایل پشتیبان نامعتبر است.")
+                onComplete(false)
+                return@launch
+            }
+
+            try {
+                if (data.sourceUrl.isNotBlank()) repository.setSourceUrl(data.sourceUrl)
+                if (data.themeMode.isNotBlank()) repository.setThemeMode(data.themeMode)
+                if (data.inputScheduleJson.isNotBlank()) {
+                    repository.setInputJson(data.inputScheduleJson)
+                }
+
+                if (data.events.isNotEmpty()) {
+                    repository.insertImportedEvents(data.events)
+                }
+                if (data.tasks.isNotEmpty()) {
+                    repository.insertImportedTasks(data.tasks)
+                }
+                if (data.notes.isNotEmpty()) {
+                    repository.insertImportedNotes(data.notes)
+                }
+
+                ScheduleWidgetProvider.updateAllWidgets(getApplication())
+                repository.showSuccessMessage("اطلاعات پشتیبان با موفقیت بازیابی شدند.")
+                refreshStorageStats()
+                loadComparison()
+                onComplete(true)
+            } catch (e: Exception) {
+                repository.showErrorMessage("خطا در بازیابی نسخه پشتیبان: ${e.message}")
+                onComplete(false)
+            }
+        }
+    }
+
+    fun shareExportFile(context: Context, content: String, fileName: String, title: String) {
+        BackupAndImportManager.shareJsonFile(context, content, fileName, title)
     }
 
     fun setTheme(mode: String) {
@@ -254,13 +476,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleThemeMode() {
-        val current = themeMode.value
-        val next = when (current) {
-            "LIGHT" -> "DARK"
-            "DARK" -> "BLACK"
-            "BLACK" -> "LIGHT"
-            else -> "DARK"
-        }
+        val next = if (themeMode.value == "BLACK") "DARK" else "BLACK"
         setTheme(next)
     }
 

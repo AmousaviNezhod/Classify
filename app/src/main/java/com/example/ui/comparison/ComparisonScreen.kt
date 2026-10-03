@@ -193,9 +193,10 @@ fun ComparisonScreen(
             ) {
                 itemsIndexed(
                     filteredDiffs,
-                    key = { index, diff -> "${index}_${diff.courseName}_${diff.groupCode}_${diff.diffType.name}" }
+                    key = { index, diff -> "${index}_${diff.courseName}_${diff.groupCode}_${diff.diffType.name}" },
+                    contentType = { _, diff -> diff.diffType.name }
                 ) { _, diffItem ->
-                    DiffCard(diff = diffItem)
+                    DiffCard(diff = diffItem, modifier = Modifier.animateItem())
                 }
             }
         }
@@ -214,13 +215,13 @@ private fun StatBadge(
     Card(
         onClick = onClick,
         modifier = modifier.testTag("stat_badge_$label"),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.small,
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) color.copy(alpha = 0.25f) else color.copy(alpha = 0.1f)
+            containerColor = if (isSelected) color.copy(alpha = 0.3f) else MaterialTheme.colorScheme.surfaceContainerHigh
         ),
         border = BorderStroke(
             width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) color else color.copy(alpha = 0.3f)
+            color = if (isSelected) color.copy(alpha = 0.9f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
         )
     ) {
         Column(
@@ -262,12 +263,12 @@ private fun DiffCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("diff_card_${diff.courseName}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.4f))
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.42f))
     ) {
         Column(
             modifier = Modifier

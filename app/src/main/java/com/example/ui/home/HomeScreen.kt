@@ -2,7 +2,9 @@ package com.example.ui.home
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,10 +28,15 @@ import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MeetingRoom
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -39,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,10 +54,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,23 +84,31 @@ import com.example.domain.model.PdfAvailabilityStatus
 import com.example.domain.model.ScheduleDayAvailability
 import com.example.domain.normalizer.PersianTextNormalizer
 import com.example.domain.parser.JsonScheduleParser
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import com.example.ui.components.DaySelector
+import com.example.ui.components.SegmentedTabs
+import com.example.ui.theme.AppMotion
+import com.example.ui.theme.tactileClick
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     mySchedule: NormalizedSchedule?,
     universitySchedule: NormalizedSchedule?,
-    selectedTab: Int,
+    selectedTab: Int = 0,
     inputJson: String,
     searchQuery: String,
     isUpdating: Boolean,
-    onTabChange: (Int) -> Unit,
+    onTabChange: (Int) -> Unit = {},
     onUpdateInputJson: (String) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onFetchSchedule: () -> Unit,
     dayAvailability: List<ScheduleDayAvailability> = emptyList(),
     modifier: Modifier = Modifier,
     onRemoveOffering: (ScheduleClass) -> Unit = {},
-    onAddOffering: (ScheduleClass) -> Unit = {}
+    onAddOffering: (ScheduleClass) -> Unit = {},
+    onOpenCourseDetail: (ScheduleClass) -> Unit = {}
 ) {
     val context = LocalContext.current
     val unitUrl = LocalUriHandler.current
@@ -96,7 +116,25 @@ fun HomeScreen(
     var importError by remember { mutableStateOf("") }
     var showHelp by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<NormalizedSchedule?>(null) }
-    val pane = selectedTab.coerceIn(0, 2)
+
+    var internalTab by remember { mutableIntStateOf(selectedTab) }
+
+    // Sync if caller pushes an explicit tab change
+    LaunchedEffect(selectedTab) {
+        internalTab = selectedTab
+    }
+
+    val pane = internalTab.coerceIn(0, 2)
+    val selectedCatalogOfferingKeys = remember(mySchedule?.classes, universitySchedule?.classes) {
+        val catalog = universitySchedule?.classes.orEmpty()
+        mySchedule?.classes.orEmpty().mapNotNull { selected ->
+            ScheduleOfferingIdentity.findCatalogMatch(selected, catalog)?.let(ScheduleOfferingIdentity::key)
+        }.toSet()
+    }
+    val changeTab: (Int) -> Unit = { index ->
+        internalTab = index
+        onTabChange(index)
+    }
 
     val jsonPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -139,7 +177,7 @@ fun HomeScreen(
                 Button(onClick = {
                     onUpdateInputJson(imported.rawJson)
                     preview = null
-                    onTabChange(0)
+                    changeTab(0)
                 }, modifier = Modifier.testTag("confirm_json_import")) { Text("تأیید و ذخیرهٔ برنامه") }
             },
             dismissButton = { TextButton(onClick = { preview = null }) { Text("بازگشت") } }
@@ -147,19 +185,62 @@ fun HomeScreen(
     }
 
     Column(modifier.fillMaxSize()) {
+        // Top Tab Navigation Bar
+        val myCoursesCount = mySchedule?.classes.orEmpty().distinctBy(ScheduleOfferingIdentity::key).size
+        val catalogCount = universitySchedule?.classes.orEmpty().distinctBy(ScheduleOfferingIdentity::key).size
+
+        // Counts moved from the tab labels into the panes: three Persian labels of
+        // varying length inside one segmented control only stay readable if they
+        // keep a similar width.
+        SegmentedTabs(
+            labels = listOf("درس‌های من", "همهٔ کلاس‌ها", "افزودن"),
+            selectedIndex = pane,
+            onSelect = { changeTab(it) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            testTagPrefix = "courses_pane"
+        )
+
+        val myCoursesLabel = if (myCoursesCount > 0) {
+            "${PersianTextNormalizer.toPersianDigits(myCoursesCount.toString())} درس در برنامهٔ شما"
+        } else {
+            null
+        }
+        val catalogLabel = if (catalogCount > 0) {
+            "${PersianTextNormalizer.toPersianDigits(catalogCount.toString())} ارائه در فهرست دانشگاه"
+        } else {
+            null
+        }
+        val paneSummary = when (pane) {
+            0 -> myCoursesLabel
+            1 -> catalogLabel
+            else -> null
+        }
+        if (paneSummary != null) {
+            Text(
+                text = paneSummary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp)
+            )
+        }
+
         when (pane) {
             0 -> MyCoursesPane(
                 schedule = mySchedule,
                 universitySchedule = universitySchedule,
+                dayAvailability = dayAvailability,
                 isUpdating = isUpdating,
                 onFetch = onFetchSchedule,
-                onAdd = { onTabChange(2) },
-                onBrowse = { onTabChange(1) },
+                onAdd = { changeTab(2) },
+                onBrowse = { changeTab(1) },
                 onRemove = onRemoveOffering,
+                onOpenCourseDetail = onOpenCourseDetail,
                 onEdit = {
                     draftJson = inputJson
                     importError = ""
-                    onTabChange(2)
+                    changeTab(2)
                 }
             )
             1 -> CatalogPane(
@@ -170,7 +251,8 @@ fun HomeScreen(
                 onSearch = onSearchQueryChange,
                 onFetch = onFetchSchedule,
                 onAdd = onAddOffering,
-                isSelected = { item -> mySchedule?.classes?.any { ScheduleOfferingIdentity.findCatalogMatch(item, listOf(it)) != null } == true }
+                onOpenCourseDetail = onOpenCourseDetail,
+                selectedOfferingKeys = selectedCatalogOfferingKeys
             )
             else -> ImportPane(
                 schedule = universitySchedule,
@@ -188,7 +270,7 @@ fun HomeScreen(
                         importError = parsed.exceptionOrNull()?.localizedMessage ?: "هیچ کلاسی در JSON پیدا نشد."
                     }
                 },
-                onManual = { onTabChange(1) },
+                onManual = { changeTab(1) },
                 onFetch = onFetchSchedule
             )
         }
@@ -199,11 +281,13 @@ fun HomeScreen(
 private fun MyCoursesPane(
     schedule: NormalizedSchedule?,
     universitySchedule: NormalizedSchedule?,
+    dayAvailability: List<ScheduleDayAvailability>,
     isUpdating: Boolean,
     onFetch: () -> Unit,
     onAdd: () -> Unit,
     onBrowse: () -> Unit,
     onRemove: (ScheduleClass) -> Unit,
+    onOpenCourseDetail: (ScheduleClass) -> Unit,
     onEdit: () -> Unit
 ) {
     val courses = remember(schedule, universitySchedule) {
@@ -214,48 +298,138 @@ private fun MyCoursesPane(
             .sortedWith(compareBy({ it.second.dayIndex }, { it.second.startTime }))
     }
 
+    val hasCatalog = universitySchedule?.classes?.isNotEmpty() == true
+
     Column(Modifier.fillMaxSize()) {
         if (courses.isEmpty()) {
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f), modifier = Modifier.size(72.dp)) {
-                    Box(contentAlignment = Alignment.Center) { Icon(Icons.AutoMirrored.Filled.EventNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(33.dp)) }
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
+                    modifier = Modifier.size(72.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.EventNote,
+                            null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(33.dp)
+                        )
+                    }
                 }
-                Text("هنوز درسی اضافه نشده", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Text("داده‌های دانشگاه را دریافت کنید، یا برنامهٔ خودتان را از Unit Selection وارد کنید.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-                Button(onClick = onFetch, enabled = !isUpdating, modifier = Modifier.fillMaxWidth().testTag("empty_state_fetch_schedule"), shape = RoundedCornerShape(14.dp)) {
-                    if (isUpdating) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Download, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (isUpdating) "در حال دریافت داده‌ها…" else "دریافت برنامهٔ دانشگاه")
+
+                Text("هنوز درسی به برنامهٔ شما اضافه نشده", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+
+                if (hasCatalog) {
+                    Text(
+                        "فهرست ${PersianTextNormalizer.toPersianDigits(universitySchedule!!.classes.size.toString())} کلاس دانشگاه دریافت شده است. می‌توانید از بخش «همهٔ کلاس‌ها» درس‌های خود را انتخاب کنید یا برنامهٔ کامل را وارد کنید.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Button(
+                        onClick = onBrowse,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Search, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("مشاهده و انتخاب از همهٔ کلاس‌ها")
+                    }
+
+                    OutlinedButton(
+                        onClick = onAdd,
+                        modifier = Modifier.fillMaxWidth().testTag("empty_state_json_entry"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.UploadFile, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("وارد کردن برنامه از فایل JSON")
+                    }
+                } else {
+                    Text(
+                        "داده‌های دانشگاه را دریافت کنید، یا برنامهٔ خودتان را از Unit Selection وارد کنید.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Button(
+                        onClick = onFetch,
+                        enabled = !isUpdating,
+                        modifier = Modifier.fillMaxWidth().testTag("empty_state_fetch_schedule"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        if (isUpdating) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.Download, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (isUpdating) "در حال دریافت داده‌ها…" else "دریافت برنامهٔ دانشگاه")
+                    }
+
+                    OutlinedButton(
+                        onClick = onAdd,
+                        modifier = Modifier.fillMaxWidth().testTag("empty_state_json_entry"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.UploadFile, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("افزودن / وارد کردن برنامه")
+                    }
                 }
-                OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().testTag("empty_state_json_entry"), shape = RoundedCornerShape(14.dp)) {
-                    Icon(Icons.Default.UploadFile, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("افزودن / وارد کردن برنامه")
+
+                if (dayAvailability.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    DayPdfStatusCard(dayAvailability)
                 }
-                if (universitySchedule?.classes?.isNotEmpty() == true) TextButton(onClick = onBrowse) { Text("یا مرور همهٔ کلاس‌ها") }
             }
         } else {
             LazyColumn(
                 Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = onAdd, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("افزودن درس")
+                        Button(
+                            onClick = onBrowse,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("افزودن درس")
                         }
-                        OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f), shape = RoundedCornerShape(12.dp)) {
-                            Icon(Icons.Default.Code, null); Spacer(Modifier.width(4.dp)); Text("ویرایش برنامه")
+                        OutlinedButton(
+                            onClick = onEdit,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Code, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("ویرایش برنامه")
                         }
                     }
                 }
+
                 items(courses, key = { ScheduleOfferingIdentity.key(it.first) }) { (original, display) ->
-                    OfferingCard(display, actionLabel = "حذف", onAction = { onRemove(original) })
+                    // animateItem keeps the list readable while a course is added or
+                    // removed: the remaining cards slide instead of jumping.
+                    Box(Modifier.animateItem()) {
+                        OfferingCard(
+                            course = display,
+                            actionLabel = "حذف",
+                            onAction = { onRemove(original) },
+                            onClick = { onOpenCourseDetail(original) }
+                        )
+                    }
                 }
             }
         }
@@ -271,11 +445,31 @@ private fun CatalogPane(
     onSearch: (String) -> Unit,
     onFetch: () -> Unit,
     onAdd: (ScheduleClass) -> Unit,
-    isSelected: (ScheduleClass) -> Boolean
+    onOpenCourseDetail: (ScheduleClass) -> Unit = {},
+    selectedOfferingKeys: Set<String>
 ) {
     val catalogClasses = schedule?.classes.orEmpty()
+    val searchableCatalog = remember(catalogClasses) {
+        catalogClasses.distinctBy(ScheduleOfferingIdentity::key)
+            .map { course -> Triple(course, ScheduleOfferingIdentity.key(course), ScheduleOfferingIdentity.searchText(course)) }
+            .sortedWith(compareBy({ it.first.dayIndex }, { it.first.startTime }, { it.first.courseName }, { it.first.groupCode }))
+    }
+    var selectedDayFilter by remember { mutableStateOf<Int?>(null) }
+    var settledSearchQuery by remember { mutableStateOf(searchQuery) }
+
+    LaunchedEffect(searchQuery) {
+        kotlinx.coroutines.delay(120)
+        settledSearchQuery = searchQuery
+    }
+
     if (catalogClasses.isEmpty()) {
-        Column(Modifier.fillMaxSize().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(Icons.Default.AccountBalance, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
                 Spacer(Modifier.height(12.dp))
@@ -284,40 +478,97 @@ private fun CatalogPane(
                 Text("دریافت داده‌ها PDFهای دانشگاه را می‌خواند و همهٔ ارائه‌ها را می‌سازد.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (dayAvailability.isNotEmpty()) {
                     Spacer(Modifier.height(18.dp))
-                    DayPdfStatusList(dayAvailability)
+                    DayPdfStatusCard(dayAvailability)
                 }
                 Spacer(Modifier.height(18.dp))
-                Button(onClick = onFetch, enabled = !isUpdating) { Text(if (isUpdating) "در حال دریافت…" else "دریافت داده‌های دانشگاه") }
+                Button(onClick = onFetch, enabled = !isUpdating) {
+                    if (isUpdating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.Default.Download, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isUpdating) "در حال دریافت…" else "دریافت داده‌های دانشگاه")
+                }
             }
         }
         return
     }
+
     Column(Modifier.fillMaxSize()) {
-        if (dayAvailability.isNotEmpty()) DayPdfStatusList(dayAvailability, Modifier.padding(top = 4.dp))
+        // Status of Days' PDFs
+        if (dayAvailability.isNotEmpty()) {
+            DayPdfStatusCard(dayAvailability, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        }
+
+        // Search Input
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearch,
-            placeholder = { Text("نام، کد، گروه، روز، ساعت، استاد یا مکان") },
+            placeholder = { Text("جستجوی نام درس، استاد، کد، گروه، مکان یا روز...") },
             leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary) },
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp).testTag("search_classes_input")
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .testTag("search_classes_input")
         )
-        val offerings = remember(catalogClasses, searchQuery) {
-            val query = PersianTextNormalizer.toAsciiDigits(PersianTextNormalizer.normalizeText(searchQuery)).lowercase(Locale.ROOT)
-            catalogClasses.distinctBy(ScheduleOfferingIdentity::key)
-                .filter { query.isBlank() || PersianTextNormalizer.toAsciiDigits(ScheduleOfferingIdentity.searchText(it)).contains(query) }
-                .sortedWith(compareBy({ it.courseName }, { it.groupCode }, { it.dayIndex }, { it.startTime }))
+
+        // Day Selector Chip Filter
+        DaySelector(
+            selectedDayIndex = selectedDayFilter,
+            onSelectDay = { selectedDayFilter = it }
+        )
+
+        // Filter Offerings
+        val offerings = remember(searchableCatalog, settledSearchQuery, selectedDayFilter) {
+            val query = PersianTextNormalizer.toAsciiDigits(PersianTextNormalizer.normalizeText(settledSearchQuery)).lowercase(Locale.ROOT)
+            searchableCatalog.asSequence()
+                .filter { (course, _, searchableText) ->
+                    val matchesQuery = query.isBlank() || searchableText.contains(query)
+                    val matchesDay = selectedDayFilter == null || course.dayIndex == selectedDayFilter
+                    matchesQuery && matchesDay
+                }
+                .toList()
         }
-        Text("${PersianTextNormalizer.toPersianDigits(offerings.size.toString())} نتیجه", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 22.dp, vertical = 2.dp))
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(offerings, key = { ScheduleOfferingIdentity.key(it) }) { course ->
-                val selected = isSelected(course)
-                OfferingCard(course, actionLabel = if (selected) "افزوده شد" else "افزودن", onAction = { if (!selected) onAdd(course) }, isSelected = selected)
+
+        Text(
+            text = "${PersianTextNormalizer.toPersianDigits(offerings.size.toString())} نتیجه یافت شد",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+        )
+
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(offerings, key = { it.second }) { (course, offeringKey, _) ->
+                val selected = offeringKey in selectedOfferingKeys
+                Box(Modifier.animateItem()) {
+                    OfferingCard(
+                        course = course,
+                        actionLabel = if (selected) "افزوده شد" else "افزودن",
+                        onAction = { if (!selected) onAdd(course) },
+                        isSelected = selected,
+                        onClick = { onOpenCourseDetail(course) }
+                    )
+                }
             }
-            if (offerings.isEmpty()) item {
-                Text("کلاسی با این عبارت پیدا نشد.", Modifier.fillMaxWidth().padding(32.dp), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (offerings.isEmpty()) {
+                item {
+                    Text(
+                        "کلاسی با این مشخصات پیدا نشد.",
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -337,9 +588,14 @@ private fun ImportPane(
 ) {
     val hasCatalog = !schedule?.classes.isNullOrEmpty()
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 8.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 96.dp)
+        ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("افزودن / وارد کردن", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("افزودن و وارد کردن برنامه", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = onHelp, modifier = Modifier.testTag("json_import_help")) {
                     Text("?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 }
@@ -364,10 +620,13 @@ private fun ImportPane(
                     Spacer(Modifier.width(5.dp))
                     Text("انتخاب فایل")
                 }
-                Button(onClick = onPreview, enabled = draftJson.isNotBlank(), modifier = Modifier.weight(1f).testTag("preview_json_button"), shape = RoundedCornerShape(12.dp)) { Text("بررسی و پیش‌نمایش") }
+                Button(onClick = onPreview, enabled = draftJson.isNotBlank(), modifier = Modifier.weight(1f).testTag("preview_json_button"), shape = RoundedCornerShape(12.dp)) {
+                    Text("بررسی و پیش‌نمایش")
+                }
             }
             if (error.isNotBlank()) {
-                Spacer(Modifier.height(10.dp)); Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(10.dp))
+                Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             if (hasCatalog) {
                 Spacer(Modifier.height(10.dp))
@@ -377,44 +636,102 @@ private fun ImportPane(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(24.dp)); DividerLabel("یا انتخاب دستی")
+            Spacer(Modifier.height(24.dp))
+            DividerLabel("یا انتخاب دستی")
             Spacer(Modifier.height(12.dp))
-            Text("فهرست دستی از فایل‌های PDF دانشگاه ساخته می‌شود، نه از یک لیست ثابت.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("می‌توانید کلاس‌ها را مستقیماً از برنامه استخراج‌شدهٔ PDF دانشگاه انتخاب کنید.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
             if (hasCatalog) {
                 Button(onClick = onManual, modifier = Modifier.fillMaxWidth().testTag("empty_state_pick_courses"), shape = RoundedCornerShape(12.dp)) {
-                    Icon(Icons.Default.Search, null); Spacer(Modifier.width(8.dp)); Text("جستجو و انتخاب از همهٔ کلاس‌ها")
+                    Icon(Icons.Default.Search, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("جستجو و انتخاب از همهٔ کلاس‌ها")
                 }
             } else {
                 OutlinedButton(onClick = onFetch, modifier = Modifier.fillMaxWidth().testTag("import_load_catalog"), shape = RoundedCornerShape(12.dp)) {
-                    Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("دریافت داده‌های دانشگاه")
+                    Icon(Icons.Default.Download, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("دریافت داده‌های دانشگاه")
                 }
             }
-            Spacer(Modifier.height(10.dp)); Text("قالب سازگار: unit-selection-schedule", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+            Spacer(Modifier.height(10.dp))
+            Text("قالب سازگار: unit-selection-schedule", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         }
     }
 }
 
 @Composable
-private fun DayPdfStatusList(items: List<ScheduleDayAvailability>, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        items.sortedBy(ScheduleDayAvailability::dayIndex).forEach { day ->
-            val label = when (day.status) {
-                PdfAvailabilityStatus.AVAILABLE -> "✓ برنامه استخراج شد (${PersianTextNormalizer.toPersianDigits(day.normalClassCount.toString())} کلاس، ${PersianTextNormalizer.toPersianDigits(day.workshopClassCount.toString())} کارگاه)"
-                PdfAvailabilityStatus.NOT_FOUND -> "○ فایل هنوز بارگذاری نشده"
-                PdfAvailabilityStatus.DOWNLOAD_FAILED -> "⚠ دانلود فایل ناموفق بود"
-                PdfAvailabilityStatus.PARSE_FAILED -> "⚠ فایل پیدا شد، اما استخراج جدول ناموفق بود"
-                PdfAvailabilityStatus.CHECK_FAILED -> "؟ بررسی سایت انجام نشد"
-                PdfAvailabilityStatus.UNKNOWN -> if (day.discoveredPdfCount > 0) "… فایل پیدا شده، در انتظار دانلود یا استخراج" else "— هنوز بررسی نشده"
+fun DayPdfStatusCard(items: List<ScheduleDayAvailability>, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    val readyCount = items.count { it.status == PdfAvailabilityStatus.AVAILABLE }
+
+    Card(
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.DateRange,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "وضعیت دریافت برنامهٔ روزها: ${PersianTextNormalizer.toPersianDigits(readyCount.toString())} از ${PersianTextNormalizer.toPersianDigits(items.size.toString())} روز آماده است",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            val color = when (day.status) {
-                PdfAvailabilityStatus.AVAILABLE -> MaterialTheme.colorScheme.primary
-                PdfAvailabilityStatus.PARSE_FAILED, PdfAvailabilityStatus.DOWNLOAD_FAILED, PdfAvailabilityStatus.CHECK_FAILED -> MaterialTheme.colorScheme.error
-                else -> MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(day.dayName, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                Text(label, style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End)
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items.sortedBy(ScheduleDayAvailability::dayIndex).forEach { day ->
+                        val label = when (day.status) {
+                            PdfAvailabilityStatus.AVAILABLE -> "✓ استخراج شد (${PersianTextNormalizer.toPersianDigits(day.normalClassCount.toString())} کلاس، ${PersianTextNormalizer.toPersianDigits(day.workshopClassCount.toString())} کارگاه)"
+                            PdfAvailabilityStatus.NOT_FOUND -> "○ هنوز بارگذاری نشده"
+                            PdfAvailabilityStatus.DOWNLOAD_FAILED -> "⚠ دانلود فایل ناموفق بود"
+                            PdfAvailabilityStatus.PARSE_FAILED -> "⚠ جدول برنامه خوانده نشد"
+                            PdfAvailabilityStatus.CHECK_FAILED -> "؟ بررسی سایت انجام نشد"
+                            PdfAvailabilityStatus.UNKNOWN -> if (day.discoveredPdfCount > 0) "… در انتظار دانلود یا استخراج" else "— هنوز بررسی نشده"
+                        }
+                        val color = when (day.status) {
+                            PdfAvailabilityStatus.AVAILABLE -> MaterialTheme.colorScheme.primary
+                            PdfAvailabilityStatus.PARSE_FAILED, PdfAvailabilityStatus.DOWNLOAD_FAILED, PdfAvailabilityStatus.CHECK_FAILED -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(day.dayName, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            Text(label, style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End)
+                        }
+                    }
+                }
             }
         }
     }
@@ -425,53 +742,127 @@ private fun OfferingCard(
     course: ScheduleClass,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
-    isSelected: Boolean = false
+    isSelected: Boolean = false,
+    onClick: (() -> Unit)? = null
 ) {
-    Card(
-        shape = RoundedCornerShape(17.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.18f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth().testTag("offering_${ScheduleOfferingIdentity.key(course).hashCode()}")
+    // Selected state animates rather than snapping: when a course is added from
+    // the catalog the card visibly settles into its new state.
+    val borderColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+        else MaterialTheme.colorScheme.outline.copy(alpha = 0.75f),
+        animationSpec = tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseOut),
+        label = "offeringBorder"
+    )
+    val containerColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerHigh,
+        animationSpec = tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseOut),
+        label = "offeringContainer"
+    )
+
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = containerColor,
+        tonalElevation = 0.dp,
+        border = BorderStroke(1.dp, borderColor),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("offering_${ScheduleOfferingIdentity.key(course).hashCode()}")
+            .then(if (onClick != null) Modifier.tactileClick(onClick = onClick) else Modifier)
     ) {
-        Column(Modifier.fillMaxWidth().padding(15.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text(course.courseName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        course.courseName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
                     Spacer(Modifier.height(4.dp))
-                    Text(buildList {
-                        if (course.courseCode.isNotBlank()) add("کد ${PersianTextNormalizer.toPersianDigits(course.courseCode)}")
-                        if (course.groupCode.isNotBlank()) add("گروه ${PersianTextNormalizer.toPersianDigits(course.groupCode)}")
-                        if (course.units > 0) add("${PersianTextNormalizer.toPersianDigits(course.units.toString())} واحد")
-                    }.joinToString("  ·  "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        buildList {
+                            if (course.courseCode.isNotBlank()) add("کد ${PersianTextNormalizer.toPersianDigits(course.courseCode)}")
+                            if (course.groupCode.isNotBlank()) add("گروه ${PersianTextNormalizer.toPersianDigits(course.groupCode)}")
+                            if (course.units > 0) add("${PersianTextNormalizer.toPersianDigits(course.units.toString())} واحد")
+                        }.joinToString("  ·  "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                if (onAction != null) TextButton(
-                    onClick = onAction,
-                    enabled = !isSelected,
-                    modifier = Modifier.testTag("offering_action_${ScheduleOfferingIdentity.key(course).hashCode()}")
-                ) {
-                    Icon(if (isSelected) Icons.Default.Check else if (actionLabel == "حذف") Icons.Default.DeleteOutline else Icons.Default.Add, null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(4.dp)); Text(actionLabel ?: "افزودن")
+                if (onAction != null) {
+                    if (isSelected) {
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                        ) {
+                            Text(
+                                text = "✓ افزوده شد",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = onAction,
+                            shape = MaterialTheme.shapes.small,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Text(actionLabel ?: "افزودن", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(course.dayOfWeek, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.weight(1f))
-                    Text("${PersianTextNormalizer.toPersianDigits(course.startTime)} – ${PersianTextNormalizer.toPersianDigits(course.endTime)}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                }
-            }
+
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.MeetingRoom, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(5.dp)); Text(course.classroom.ifBlank { "مکان ثبت نشده" }, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(course.dayOfWeek, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${PersianTextNormalizer.toPersianDigits(course.startTime)} – ${PersianTextNormalizer.toPersianDigits(course.endTime)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.MeetingRoom, null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(3.dp))
+                        Text(course.classroom.ifBlank { "مکان مشخص نشده" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                if (course.teacher.isNotBlank()) Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Person, null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(4.dp))
-                    Text(course.teacher, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+
+            if (course.teacher.isNotBlank() || course.parity.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (course.teacher.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Person, null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(3.dp))
+                            Text(course.teacher, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                    }
+                    if (course.parity.isNotBlank()) {
+                        Text(course.parity, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                    }
                 }
             }
         }

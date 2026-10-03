@@ -202,7 +202,8 @@ fun PdfManagerScreen(
                     PdfItemCard(
                         pdf = pdf,
                         onOpen = { onOpenPdf(pdf) },
-                        onDelete = { pendingDelete = pdf }
+                        onDelete = { pendingDelete = pdf },
+                        modifier = Modifier.animateItem()
                     )
                 }
             }
@@ -221,12 +222,12 @@ private fun PdfItemCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("pdf_item_card_${pdf.fileName}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f))
     ) {
         Column(
             modifier = Modifier

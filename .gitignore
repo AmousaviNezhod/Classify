@@ -23,4 +23,15 @@ app/build/
 debug.keystore
 my-upload-key.jks
 .freebuff/
+.agents/
+.claude/
+.kiro/
+.pi/
+.qoder/
+.trae/
+.windsurf/
+.zcode/
+skills/
+skills-lock.json
+
 

@@ -6,11 +6,17 @@ import android.util.Log
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.data.local.dao.CourseEventDao
+import com.example.data.local.dao.CourseNoteDao
+import com.example.data.local.dao.CourseTaskDao
 import com.example.data.local.dao.DownloadedPdfDao
 import com.example.data.local.dao.ScheduleDao
 import com.example.data.local.dao.ScheduleDayAvailabilityDao
 import com.example.data.local.dao.SettingsDao
 import com.example.data.local.entities.AppSettingsEntity
+import com.example.data.local.entities.CourseEventEntity
+import com.example.data.local.entities.CourseNoteEntity
+import com.example.data.local.entities.CourseTaskEntity
 import com.example.data.local.entities.DownloadedPdfEntity
 import com.example.data.local.entities.ScheduleClassEntity
 import com.example.data.local.entities.ScheduleDayAvailabilityEntity
@@ -23,9 +29,12 @@ import kotlinx.coroutines.runBlocking
         ScheduleClassEntity::class,
         DownloadedPdfEntity::class,
         ScheduleDayAvailabilityEntity::class,
-        AppSettingsEntity::class
+        AppSettingsEntity::class,
+        CourseEventEntity::class,
+        CourseTaskEntity::class,
+        CourseNoteEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -34,6 +43,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadedPdfDao(): DownloadedPdfDao
     abstract fun scheduleDayAvailabilityDao(): ScheduleDayAvailabilityDao
     abstract fun settingsDao(): SettingsDao
+    abstract fun courseEventDao(): CourseEventDao
+    abstract fun courseTaskDao(): CourseTaskDao
+    abstract fun courseNoteDao(): CourseNoteDao
 
     companion object {
         private const val TAG = "AppDatabase"

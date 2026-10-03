@@ -108,3 +108,87 @@ interface SettingsDao {
     @Query("DELETE FROM app_settings")
     suspend fun clearAllSettings()
 }
+
+@Dao
+interface CourseEventDao {
+    @Query("SELECT * FROM course_events ORDER BY timestamp ASC, dateString ASC, timeString ASC")
+    fun observeAllEvents(): Flow<List<com.example.data.local.entities.CourseEventEntity>>
+
+    @Query("SELECT * FROM course_events WHERE courseKey = :courseKey ORDER BY timestamp ASC, dateString ASC")
+    fun observeEventsForCourse(courseKey: String): Flow<List<com.example.data.local.entities.CourseEventEntity>>
+
+    @Query("SELECT * FROM course_events ORDER BY timestamp ASC")
+    suspend fun getAllEventsDirect(): List<com.example.data.local.entities.CourseEventEntity>
+
+    @Query("SELECT * FROM course_events WHERE courseKey = :courseKey ORDER BY timestamp ASC")
+    suspend fun getEventsForCourseDirect(courseKey: String): List<com.example.data.local.entities.CourseEventEntity>
+
+    @Query("SELECT * FROM course_events WHERE id = :id LIMIT 1")
+    suspend fun getEventById(id: String): com.example.data.local.entities.CourseEventEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEvent(event: com.example.data.local.entities.CourseEventEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEvents(events: List<com.example.data.local.entities.CourseEventEntity>)
+
+    @Query("DELETE FROM course_events WHERE id = :id")
+    suspend fun deleteEventById(id: String)
+
+    @Query("DELETE FROM course_events WHERE courseKey = :courseKey")
+    suspend fun deleteEventsForCourse(courseKey: String)
+
+    @Query("DELETE FROM course_events")
+    suspend fun deleteAllEvents()
+}
+
+@Dao
+interface CourseTaskDao {
+    @Query("SELECT * FROM course_tasks ORDER BY isDone ASC, deadlineTimestamp ASC, createdAt DESC")
+    fun observeAllTasks(): Flow<List<com.example.data.local.entities.CourseTaskEntity>>
+
+    @Query("SELECT * FROM course_tasks WHERE courseKey = :courseKey ORDER BY isDone ASC, deadlineTimestamp ASC, createdAt DESC")
+    fun observeTasksForCourse(courseKey: String): Flow<List<com.example.data.local.entities.CourseTaskEntity>>
+
+    @Query("SELECT * FROM course_tasks ORDER BY createdAt DESC")
+    suspend fun getAllTasksDirect(): List<com.example.data.local.entities.CourseTaskEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTask(task: com.example.data.local.entities.CourseTaskEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTasks(tasks: List<com.example.data.local.entities.CourseTaskEntity>)
+
+    @Query("DELETE FROM course_tasks WHERE id = :id")
+    suspend fun deleteTaskById(id: String)
+
+    @Query("DELETE FROM course_tasks WHERE courseKey = :courseKey")
+    suspend fun deleteTasksForCourse(courseKey: String)
+
+    @Query("DELETE FROM course_tasks")
+    suspend fun deleteAllTasks()
+}
+
+@Dao
+interface CourseNoteDao {
+    @Query("SELECT * FROM course_notes WHERE courseKey = :courseKey ORDER BY updatedAt DESC")
+    fun observeNotesForCourse(courseKey: String): Flow<List<com.example.data.local.entities.CourseNoteEntity>>
+
+    @Query("SELECT * FROM course_notes ORDER BY updatedAt DESC")
+    suspend fun getAllNotesDirect(): List<com.example.data.local.entities.CourseNoteEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNote(note: com.example.data.local.entities.CourseNoteEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotes(notes: List<com.example.data.local.entities.CourseNoteEntity>)
+
+    @Query("DELETE FROM course_notes WHERE id = :id")
+    suspend fun deleteNoteById(id: String)
+
+    @Query("DELETE FROM course_notes WHERE courseKey = :courseKey")
+    suspend fun deleteNotesForCourse(courseKey: String)
+
+    @Query("DELETE FROM course_notes")
+    suspend fun deleteAllNotes()
+}

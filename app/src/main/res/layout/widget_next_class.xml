@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <!-- Top header row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/widget_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/widget_badge_background"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp"
+            android:text="کلاس بعدی"
+            android:textColor="#34D399"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/widget_day_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="امروز"
+            android:textColor="#94A3B8"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- Main Course Title -->
+    <TextView
+        android:id="@+id/widget_course_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="برنامه‌سازی پیشرفته"
+        android:textColor="#F8FAFC"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- Time and Location -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/widget_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="۱۰:۰۰ – ۱۲:۰۰"
+            android:textColor="#38BDF8"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:text="·"
+            android:textColor="#64748B"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/widget_classroom"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="کلاس ۱۰۵"
+            android:textColor="#CBD5E1"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- Teacher info -->
+    <TextView
+        android:id="@+id/widget_teacher"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="استاد: دکتر محمدی"
+        android:textColor="#94A3B8"
+        android:textSize="11sp" />
+
+    <!-- Bottom summary row -->
+    <TextView
+        android:id="@+id/widget_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="۲ کلاس دیگر برای امروز"
+        android:textColor="#64748B"
+        android:textSize="10sp" />
+
+</LinearLayout>

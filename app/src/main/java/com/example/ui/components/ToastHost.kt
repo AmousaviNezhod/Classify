@@ -1,11 +1,13 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,8 +35,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.example.ui.theme.AppMotion
 import kotlinx.coroutines.delay
 
 enum class ToastType { SUCCESS, INFO, WARNING, ERROR }
@@ -62,8 +69,18 @@ fun ToastHost(
             }
             AnimatedVisibility(
                 visible = visible,
-                enter = slideInVertically(tween(220), initialOffsetY = { it / 2 }) + fadeIn(tween(220)),
-                exit = slideOutVertically(tween(180), targetOffsetY = { it / 2 }) + fadeOut(tween(180))
+                enter = slideInVertically(
+                    animationSpec = spring(
+                        dampingRatio = 0.78f,
+                        stiffness = 480f,
+                        visibilityThreshold = IntOffset(1, 1)
+                    ),
+                    initialOffsetY = { it }
+                ) + fadeIn(tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseOut)),
+                exit = slideOutVertically(
+                    animationSpec = tween(AppMotion.DURATION_QUICK, easing = AppMotion.EaseIn),
+                    targetOffsetY = { it / 2 }
+                ) + fadeOut(tween(AppMotion.DURATION_QUICK))
             ) {
                 ToastCard(toast) { visible = false }
             }
@@ -79,28 +96,46 @@ private fun ToastCard(toast: AppToast, onDismiss: () -> Unit) {
         ToastType.WARNING -> Icons.Default.Info to MaterialTheme.colorScheme.secondary
         ToastType.ERROR -> Icons.Default.ErrorOutline to MaterialTheme.colorScheme.error
     }
+
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 5.dp,
-        shadowElevation = 8.dp
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 0.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.9f))
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 5.dp, bottom = 5.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(end = 4.dp)
+                // Status rail replaces the drop shadow the old toast relied on.
+                // Drawn behind the row so it always matches the real height.
+                .drawBehind {
+                    val railWidth = 3.dp.toPx()
+                    drawRect(
+                        color = tint.copy(alpha = 0.9f),
+                        topLeft = Offset(size.width - railWidth, 0f),
+                        size = Size(railWidth, size.height)
+                    )
+                },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(21.dp))
+            Spacer(Modifier.width(14.dp))
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(19.dp))
             Spacer(Modifier.width(10.dp))
             Text(
                 toast.message,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).padding(vertical = 12.dp),
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             IconButton(onClick = onDismiss) {
-                Icon(Icons.Default.Close, contentDescription = "بستن پیام", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "بستن پیام",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

@@ -72,3 +72,55 @@ data class AppSettingsEntity(
     val key: String,
     val value: String
 )
+
+@Entity(
+    tableName = "course_events",
+    indices = [androidx.room.Index(value = ["courseKey"])]
+)
+data class CourseEventEntity(
+    @PrimaryKey
+    val id: String,
+    val courseKey: String,
+    val courseName: String,
+    val courseCode: String = "",
+    val title: String,
+    val type: String, // EXAM, MIDTERM, PRESENTATION, ASSIGNMENT, QUIZ, OTHER
+    val dateString: String, // e.g. "1403/10/25" or "2025-05-15"
+    val timeString: String = "", // e.g. "10:30"
+    val timestamp: Long = 0L, // epoch millis for sorting, alarms, countdown
+    val description: String = "",
+    val location: String = "",
+    val reminderMinutesBefore: Int = -1, // -1: none, 0: at event time, 1440: 1 day, 2880: 2 days, 4320: 3 days, 10080: 7 days
+    val isCompleted: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "course_tasks",
+    indices = [androidx.room.Index(value = ["courseKey"])]
+)
+data class CourseTaskEntity(
+    @PrimaryKey
+    val id: String,
+    val courseKey: String,
+    val courseName: String,
+    val title: String,
+    val isDone: Boolean = false,
+    val deadlineString: String = "",
+    val deadlineTimestamp: Long = 0L,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(
+    tableName = "course_notes",
+    indices = [androidx.room.Index(value = ["courseKey"])]
+)
+data class CourseNoteEntity(
+    @PrimaryKey
+    val id: String,
+    val courseKey: String,
+    val courseName: String,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)

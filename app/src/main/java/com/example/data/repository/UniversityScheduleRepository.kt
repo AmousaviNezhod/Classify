@@ -17,6 +17,10 @@ import com.example.domain.model.ScheduleClass
 import com.example.domain.model.ScheduleDayAvailability
 import com.example.domain.model.ScheduleOfferingIdentity
 import com.example.domain.model.ScheduleComparisonSummary
+import com.example.domain.model.CourseEvent
+import com.example.domain.model.CourseTask
+import com.example.domain.model.CourseNote
+import com.example.notification.ReminderNotificationManager
 import com.example.domain.parser.JsonScheduleParser
 import com.example.domain.parser.PdfScheduleParser
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +69,9 @@ class UniversityScheduleRepository(
     private val pdfDao by lazy { database.downloadedPdfDao() }
     private val availabilityDao by lazy { database.scheduleDayAvailabilityDao() }
     private val settingsDao by lazy { database.settingsDao() }
+    private val courseEventDao by lazy { database.courseEventDao() }
+    private val courseTaskDao by lazy { database.courseTaskDao() }
+    private val courseNoteDao by lazy { database.courseNoteDao() }
 
     private val _updateStatus = MutableStateFlow<UpdateStatus>(UpdateStatus.Idle)
     val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
@@ -76,16 +83,16 @@ class UniversityScheduleRepository(
     val universityScheduleFlow: Flow<NormalizedSchedule?> by lazy {
         combine(
             scheduleDao.getSchedule(SCHEDULE_ID_UNIVERSITY),
+            scheduleDao.getClassesForSchedule(SCHEDULE_ID_UNIVERSITY),
             dayAvailabilityFlow
-        ) { scheduleEntity, availability -> scheduleEntity to availability }
-            .map { (scheduleEntity, availability) ->
-                if (scheduleEntity == null) return@map null
-                val classEntities = scheduleDao.getClassesDirect(scheduleEntity.id)
+        ) { scheduleEntity, classEntities, availability ->
+            if (scheduleEntity == null) null
+            else {
                 val classes = classEntities.map { it.toDomain() }
                 val currentAvailability = availability.ifEmpty { defaultDayAvailability() }
                 scheduleEntity.toDomain(classes).copy(dayAvailability = currentAvailability)
             }
-            .flowOn(Dispatchers.IO)
+        }.flowOn(Dispatchers.IO)
     }
 
     val downloadedPdfsFlow: Flow<List<DownloadedPdfEntity>> by lazy { pdfDao.getAllPdfs() }
@@ -144,6 +151,36 @@ class UniversityScheduleRepository(
     val themeModeFlow: Flow<String> by lazy {
         settingsDao.getSetting(KEY_THEME_MODE)
             .map { it?.ifBlank { null } ?: "SYSTEM" }
+    }
+
+    val allEventsFlow: Flow<List<CourseEvent>> by lazy {
+        courseEventDao.observeAllEvents()
+            .map { list -> list.map { CourseEvent.fromEntity(it) } }
+            .flowOn(Dispatchers.IO)
+    }
+
+    fun eventsForCourseFlow(courseKey: String): Flow<List<CourseEvent>> {
+        return courseEventDao.observeEventsForCourse(courseKey)
+            .map { list -> list.map { CourseEvent.fromEntity(it) } }
+            .flowOn(Dispatchers.IO)
+    }
+
+    val allTasksFlow: Flow<List<CourseTask>> by lazy {
+        courseTaskDao.observeAllTasks()
+            .map { list -> list.map { CourseTask.fromEntity(it) } }
+            .flowOn(Dispatchers.IO)
+    }
+
+    fun tasksForCourseFlow(courseKey: String): Flow<List<CourseTask>> {
+        return courseTaskDao.observeTasksForCourse(courseKey)
+            .map { list -> list.map { CourseTask.fromEntity(it) } }
+            .flowOn(Dispatchers.IO)
+    }
+
+    fun notesForCourseFlow(courseKey: String): Flow<List<CourseNote>> {
+        return courseNoteDao.observeNotesForCourse(courseKey)
+            .map { list -> list.map { CourseNote.fromEntity(it) } }
+            .flowOn(Dispatchers.IO)
     }
 
     // ----------------------------------------------------
@@ -257,10 +294,122 @@ class UniversityScheduleRepository(
         }
     }
 
+    // ----------------------------------------------------
+    // COURSE EVENTS, TASKS & NOTES
+    // ----------------------------------------------------
+
+    suspend fun upsertEvent(event: CourseEvent) = withContext(Dispatchers.IO) {
+        courseEventDao.insertEvent(event.toEntity())
+        if (event.reminderMinutesBefore >= 0 && !event.isCompleted && event.timestamp > System.currentTimeMillis()) {
+            ReminderNotificationManager.scheduleReminder(context, event)
+        } else {
+            ReminderNotificationManager.cancelReminder(context, event.id)
+        }
+    }
+
+    suspend fun deleteEvent(eventId: String) = withContext(Dispatchers.IO) {
+        ReminderNotificationManager.cancelReminder(context, eventId)
+        courseEventDao.deleteEventById(eventId)
+    }
+
+    suspend fun toggleEventCompleted(event: CourseEvent) = withContext(Dispatchers.IO) {
+        val updated = event.copy(isCompleted = !event.isCompleted)
+        upsertEvent(updated)
+    }
+
+    suspend fun upsertTask(task: CourseTask) = withContext(Dispatchers.IO) {
+        courseTaskDao.insertTask(task.toEntity())
+    }
+
+    suspend fun deleteTask(taskId: String) = withContext(Dispatchers.IO) {
+        courseTaskDao.deleteTaskById(taskId)
+    }
+
+    suspend fun toggleTaskDone(task: CourseTask) = withContext(Dispatchers.IO) {
+        val updated = task.copy(isDone = !task.isDone)
+        courseTaskDao.insertTask(updated.toEntity())
+    }
+
+    suspend fun upsertNote(note: CourseNote) = withContext(Dispatchers.IO) {
+        courseNoteDao.insertNote(note.toEntity())
+    }
+
+    suspend fun deleteNote(noteId: String) = withContext(Dispatchers.IO) {
+        courseNoteDao.deleteNoteById(noteId)
+    }
+
+    suspend fun deleteCourseCascade(courseKey: String) = withContext(Dispatchers.IO) {
+        // 1. Remove course from input schedule JSON
+        val currentJson = inputJsonFlow.firstOrNull() ?: ""
+        if (currentJson.isNotBlank()) {
+            val parsed = JsonScheduleParser.parse(currentJson, SCHEDULE_ID_INPUT).getOrNull()
+            if (parsed != null) {
+                val remainingClasses = parsed.classes.filterNot {
+                    it.semanticKey == courseKey ||
+                    ScheduleOfferingIdentity.key(it) == courseKey ||
+                    "${it.courseName.trim().lowercase()}_${it.groupCode.trim().ifEmpty { "0" }}" == courseKey
+                }
+                if (remainingClasses.isEmpty()) {
+                    setInputJson("")
+                } else {
+                    val updatedSchedule = parsed.copy(classes = remainingClasses)
+                    setInputJson(JsonScheduleParser.toUnitSelectionJson(updatedSchedule))
+                }
+            }
+        }
+
+        // 2. Cancel reminders for all events of this course
+        val events = courseEventDao.getEventsForCourseDirect(courseKey)
+        events.forEach {
+            ReminderNotificationManager.cancelReminder(context, it.id)
+        }
+
+        // 3. Delete all dependent events, tasks, notes
+        courseEventDao.deleteEventsForCourse(courseKey)
+        courseTaskDao.deleteTasksForCourse(courseKey)
+        courseNoteDao.deleteNotesForCourse(courseKey)
+
+        _updateStatus.value = UpdateStatus.Success("درس و تمام رویدادها، وظایف و یادداشت‌های وابسته حذف شدند.")
+    }
+
+    suspend fun getAllEventsDirect(): List<CourseEvent> = withContext(Dispatchers.IO) {
+        courseEventDao.getAllEventsDirect().map { CourseEvent.fromEntity(it) }
+    }
+
+    suspend fun getAllTasksDirect(): List<CourseTask> = withContext(Dispatchers.IO) {
+        courseTaskDao.getAllTasksDirect().map { CourseTask.fromEntity(it) }
+    }
+
+    suspend fun getAllNotesDirect(): List<CourseNote> = withContext(Dispatchers.IO) {
+        courseNoteDao.getAllNotesDirect().map { CourseNote.fromEntity(it) }
+    }
+
+    suspend fun insertImportedEvents(events: List<CourseEvent>) = withContext(Dispatchers.IO) {
+        courseEventDao.insertEvents(events.map { it.toEntity() })
+        events.forEach { event ->
+            if (event.reminderMinutesBefore >= 0 && !event.isCompleted && event.timestamp > System.currentTimeMillis()) {
+                ReminderNotificationManager.scheduleReminder(context, event)
+            }
+        }
+    }
+
+    suspend fun insertImportedTasks(tasks: List<CourseTask>) = withContext(Dispatchers.IO) {
+        courseTaskDao.insertTasks(tasks.map { it.toEntity() })
+    }
+
+    suspend fun insertImportedNotes(notes: List<CourseNote>) = withContext(Dispatchers.IO) {
+        courseNoteDao.insertNotes(notes.map { it.toEntity() })
+    }
+
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
         clearCachedSchedule()
         clearDownloadedPdfs()
         settingsDao.clearAllSettings()
+        val allEvents = courseEventDao.getAllEventsDirect()
+        allEvents.forEach { ReminderNotificationManager.cancelReminder(context, it.id) }
+        courseEventDao.deleteAllEvents()
+        courseTaskDao.deleteAllTasks()
+        courseNoteDao.deleteAllNotes()
     }
 
     fun getStorageSizeFormatted(): String {

@@ -3,4 +3,10 @@
     <files-path
         name="schedules"
         path="schedules/" />
+    <cache-path
+        name="shared_cache"
+        path="exports/" />
+    <files-path
+        name="internal_files"
+        path="." />
 </paths>
