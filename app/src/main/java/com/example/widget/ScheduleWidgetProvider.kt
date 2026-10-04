@@ -12,6 +12,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.local.database.AppDatabase
 import com.example.data.repository.UniversityScheduleRepository
+import com.example.domain.model.ScheduleOfferingIdentity
 import com.example.domain.normalizer.PersianTextNormalizer
 import com.example.domain.parser.JsonScheduleParser
 import kotlinx.coroutines.CoroutineScope
@@ -45,12 +46,21 @@ class ScheduleWidgetProvider : AppWidgetProvider() {
                 val db = AppDatabase.getDatabase(context)
                 val inputJson = db.settingsDao().getSettingDirect(UniversityScheduleRepository.KEY_INPUT_JSON) ?: ""
                 val schedule = JsonScheduleParser.parse(inputJson, UniversityScheduleRepository.SCHEDULE_ID_INPUT).getOrNull()
+                val catalogClasses = db.scheduleDao().getClassesDirect(UniversityScheduleRepository.SCHEDULE_ID_UNIVERSITY).map { it.toDomain() }
+                val enrichedSchedule = if (schedule != null && catalogClasses.isNotEmpty()) {
+                    val catalogByDay = catalogClasses.groupBy { it.dayIndex }
+                    schedule.copy(
+                        classes = schedule.classes.map {
+                            ScheduleOfferingIdentity.enrichFromCatalog(it, catalogByDay[it.dayIndex].orEmpty())
+                        }
+                    )
+                } else schedule
 
                 val now = Calendar.getInstance()
                 val currentDayIndex = getPersianDayIndex(now.get(Calendar.DAY_OF_WEEK))
                 val nowTimeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
 
-                val todayClasses = schedule?.classes.orEmpty()
+                val todayClasses = enrichedSchedule?.classes.orEmpty()
                     .filter { it.dayIndex == currentDayIndex }
                     .sortedBy { it.startTime }
 

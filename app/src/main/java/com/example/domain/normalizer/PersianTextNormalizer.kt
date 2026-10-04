@@ -90,16 +90,24 @@ object PersianTextNormalizer {
         return text.trimEnd()
     }
 
+    private val REGEX_NEWLINES = Regex("[\\r\\n]+")
+    private val REGEX_SPACES = Regex("\\s+")
+    private val REGEX_PUNCT = Regex("[\\s\\p{Punct}،؛؟٪٫٬ـ]+")
+    private val REGEX_PREFIX_CUT = Regex("^(?:ساعت|زمان|روز|کلاس|درس|نام درس|عنوان درس|مبحث|کد درس)[:\\s-]*")
+    private val REGEX_TEACHER_CUT = Regex("(?:استاد|مدرس|دکتر|مهندس)(?:\\s*[:：]|\\s+|-)\\s*.*$")
+    private val REGEX_LAB_PREFIX = Regex("^(?:ازمایشگاه|آزمایشگاه|کارگاه|از|آز)(?:\\s*[و/&+]\\s*(?:ازمایشگاه|آزمایشگاه|کارگاه|از|آز))?\\s+")
+    private val REGEX_TRIM_PUNCT = Regex("^[\\s:：،,;؛.()\\-]+|[\\s:：،,;؛.()\\-]+$")
+
     /** Normalize extracted/imported course names without dropping meaningful digits. */
     fun normalizeCourseName(input: String?): String = normalizeText(input)
-        .replace(Regex("[\\r\\n]+"), " ")
-        .replace(Regex("\\s+"), " ")
+        .replace(REGEX_NEWLINES, " ")
+        .replace(REGEX_SPACES, " ")
         .trim()
 
     /** Normalize punctuation and spacing consistently for strict course-name matching. */
-    fun normalizeCourseNameForMatch(input: String?): String = normalizeCourseName(input)
+    fun normalizeCourseNameForMatch(input: String?): String = toAsciiDigits(normalizeCourseName(input))
         .lowercase(Locale.ROOT)
-        .replace(Regex("[\\s\\p{Punct}،؛؟٪٫٬ـ]+"), "")
+        .replace(REGEX_PUNCT, "")
 
     /**
      * Converts Persian and Arabic digits to standard ASCII digits.
@@ -202,13 +210,33 @@ object PersianTextNormalizer {
      * Removes leading/trailing "درس", "آزمایشگاه", "کارگاه", digits, punctuation.
      */
     fun cleanCourseName(name: String): String {
-        val cleaned = normalizeCourseName(name)
-            .replace(Regex("^(?:ساعت|زمان|روز|کلاس|درس|نام درس|عنوان درس|مبحث|کد درس)[:\\s-]*"), "")
-            .replace(Regex("(?:استاد|مدرس|دکتر|مهندس)[:\\s-]*.*$"), "")
-            .replace(Regex("^(?:آزمایشگاه|آز|کارگاه)\\s+"), "")
-            .replace(Regex("^[\\s:：،,;؛.()\\-]+|[\\s:：،,;؛.()\\-]+$"), "")
+        val cleaned = toAsciiDigits(normalizeCourseName(name))
+            .replace(REGEX_PREFIX_CUT, "")
+            // A teacher reference cuts the rest of the cell — but only when it is a
+            // separate word: "مهندسی پی" is a course name, not "مهندس" + junk.
+            .replace(REGEX_TEACHER_CUT, "")
+            .replace(REGEX_LAB_PREFIX, "")
+            .replace(REGEX_TRIM_PUNCT, "")
             .trim()
         // A class/room code by itself is not a course name. Keep digits inside real names.
         return cleaned.takeIf { value -> value.any(Char::isLetter) }.orEmpty()
+    }
+
+    /**
+     * Normalizes a teacher name by removing academic/courtesy titles (دکتر، مهندس، استاد، ...)
+     */
+    fun cleanTeacherName(name: String?): String {
+        if (name.isNullOrBlank()) return ""
+        return normalizeText(name)
+            .replace(Regex("^(?:دکتر|مهندس|استاد|سید|سیده|خانم|آقای)\\s+"), "")
+            // PDF cells smuggle parity and group markers into the teacher field,
+            // e.g. "یداللهی شاه راه *زوج", "کهرم*زوج گ1 -کلانی", "شریف زاده(تا71)".
+            // They are not part of the name and must not split name matching.
+            .replace(Regex("\\s*[*×•·]\\s*(?:زوج|فرد|هفتگی)?"), " ")
+            .replace(Regex("\\([^()]*\\)"), " ")
+            .replace(Regex("(?<![\\p{L}\\p{N}])(?:گروه|گ)\\s*\\d+(?![\\p{L}\\p{N}])"), " ")
+            .replace(Regex("\\s*[-–—]\\s*"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 }

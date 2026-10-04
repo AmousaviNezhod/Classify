@@ -9,10 +9,12 @@ import com.example.data.local.entities.DownloadedPdfEntity
 import com.example.data.local.entities.ScheduleClassEntity
 import com.example.data.local.entities.ScheduleDayAvailabilityEntity
 import com.example.data.local.entities.ScheduleEntity
+import com.example.data.local.entities.toEntity
 import com.example.data.remote.UniversityRemoteDataSource
 import com.example.domain.comparator.ScheduleComparator
 import com.example.domain.model.NormalizedSchedule
 import com.example.domain.model.PdfAvailabilityStatus
+import com.example.domain.model.PdfScheduleParseResult
 import com.example.domain.model.ScheduleClass
 import com.example.domain.model.ScheduleDayAvailability
 import com.example.domain.model.ScheduleOfferingIdentity
@@ -49,7 +51,10 @@ class UniversityScheduleRepository(
     private val context: Context,
     private val databaseOverride: AppDatabase? = null,
     private val remoteDataSource: UniversityRemoteDataSource = UniversityRemoteDataSource(),
-    private val storageManager: PdfStorageManager = PdfStorageManager(context)
+    private val storageManager: PdfStorageManager = PdfStorageManager(context),
+    private val localPdfParser: (File, String, Context) -> PdfScheduleParseResult = { file, scheduleId, appContext ->
+        PdfScheduleParser.parsePdfFileDetailed(file, scheduleId, appContext)
+    }
 ) {
 
     companion object {
@@ -599,7 +604,7 @@ class UniversityScheduleRepository(
                         val resultsForDay = dayResults.getOrPut(stateDay) { mutableListOf() }
                         resultsForDay.add(parseResult)
                         dayStates[stateDay] = dayStates[stateDay].copy(
-                            status = if (resultsForDay.any { it.normalExtractionSucceeded }) PdfAvailabilityStatus.AVAILABLE else PdfAvailabilityStatus.PARSE_FAILED,
+                            status = if (resultsForDay.any { it.succeeded }) PdfAvailabilityStatus.AVAILABLE else PdfAvailabilityStatus.PARSE_FAILED,
                             discoveredPdfCount = maxOf(dayStates[stateDay].discoveredPdfCount, 1),
                             normalClassCount = resultsForDay.sumOf { it.normalClasses.size },
                             workshopClassCount = resultsForDay.sumOf { it.workshopClasses.size },
@@ -665,6 +670,28 @@ class UniversityScheduleRepository(
             _updateStatus.value = UpdateStatus.Progress("در حال ذخیره‌سازی فهرست آماده‌شده...")
             scheduleDao.saveScheduleWithClasses(scheduleEntity, classEntities)
 
+            // Recalculate true per-day counts so multi-day workshop PDFs don't lump all workshops into Saturday.
+            val recalculatedAvailability = dayStates.map { day ->
+                val classesForDay = distinctClasses.filter { it.dayIndex == day.dayIndex }
+                val normalCount = classesForDay.count { !it.isWorkshop }
+                val workshopCount = classesForDay.count { it.isWorkshop }
+                if (classesForDay.isNotEmpty()) {
+                    day.copy(
+                        status = PdfAvailabilityStatus.AVAILABLE,
+                        normalClassCount = normalCount,
+                        workshopClassCount = workshopCount,
+                        checkedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    day.copy(
+                        normalClassCount = 0,
+                        workshopClassCount = 0,
+                        checkedAt = System.currentTimeMillis()
+                    )
+                }
+            }
+            saveAvailability(recalculatedAvailability)
+
             val isUpToDate = downloadedCount == 0 && reusedCount > 0
 
             val successMessage = if (isUpToDate) {
@@ -729,8 +756,8 @@ class UniversityScheduleRepository(
                 fileSize = targetFile.length(),
                 downloadTime = System.currentTimeMillis(),
                 dayIndex = extractedClasses.firstOrNull()?.dayIndex ?: -1,
-                parseStatus = if (parsedResult.normalExtractionSucceeded) "SUCCESS" else "FAILED",
-                parseError = parsedResult.diagnostics.firstOrNull().takeIf { !parsedResult.normalExtractionSucceeded },
+                parseStatus = if (parsedResult.succeeded) "SUCCESS" else "FAILED",
+                parseError = parsedResult.diagnostics.firstOrNull().takeIf { !parsedResult.succeeded },
                 extractedClassCount = parsedResult.normalClasses.size,
                 extractedWorkshopCount = parsedResult.workshopClasses.size
             )
@@ -756,22 +783,27 @@ class UniversityScheduleRepository(
             )
 
             scheduleDao.saveScheduleWithClasses(scheduleEntity, combined.map { it.toEntity(SCHEDULE_ID_UNIVERSITY) })
-            val manualDay = extractedClasses.firstOrNull()?.dayIndex?.takeIf { it in dayNames.indices }
-                ?: dayIndexFromText(fileName)
-            if (manualDay in dayNames.indices) {
-                val currentAvailability = dayAvailabilityFlow.firstOrNull().orEmpty().ifEmpty { defaultDayAvailability() }
-                val old = currentAvailability.firstOrNull { it.dayIndex == manualDay } ?: defaultDayAvailability()[manualDay]
-                saveAvailability((currentAvailability
-                    .filterNot { it.dayIndex == manualDay } + old.copy(
-                    status = if (parsedResult.normalExtractionSucceeded) PdfAvailabilityStatus.AVAILABLE else PdfAvailabilityStatus.PARSE_FAILED,
-                    discoveredPdfCount = 1,
-                    normalClassCount = parsedResult.normalClasses.size,
-                    workshopClassCount = parsedResult.workshopClasses.size,
-                    sourceFileName = fileName,
-                    sourceUrl = "file://$fileName",
-                    checkedAt = System.currentTimeMillis()
-                )))
+            val currentAvailability = dayAvailabilityFlow.firstOrNull().orEmpty().ifEmpty { defaultDayAvailability() }.toMutableList()
+            defaultDayAvailability().forEach { day ->
+                val classesForDay = combined.filter { it.dayIndex == day.dayIndex }
+                if (classesForDay.isNotEmpty()) {
+                    val normalCount = classesForDay.count { !it.isWorkshop }
+                    val workshopCount = classesForDay.count { it.isWorkshop }
+                    val idx = currentAvailability.indexOfFirst { it.dayIndex == day.dayIndex }
+                    val old = if (idx >= 0) currentAvailability[idx] else day
+                    val updated = old.copy(
+                        status = PdfAvailabilityStatus.AVAILABLE,
+                        discoveredPdfCount = maxOf(old.discoveredPdfCount, 1),
+                        normalClassCount = normalCount,
+                        workshopClassCount = workshopCount,
+                        sourceFileName = if (extractedClasses.any { it.dayIndex == day.dayIndex }) fileName else old.sourceFileName,
+                        sourceUrl = if (extractedClasses.any { it.dayIndex == day.dayIndex }) "file://$fileName" else old.sourceUrl,
+                        checkedAt = System.currentTimeMillis()
+                    )
+                    if (idx >= 0) currentAvailability[idx] = updated else currentAvailability.add(updated)
+                }
             }
+            saveAvailability(currentAvailability)
 
             _updateStatus.value = UpdateStatus.Success("فایل با موفقیت وارد شد و ${extractedClasses.size} کلاس اضافه گردید.", false)
             Result.success(extractedClasses.size)
@@ -779,6 +811,98 @@ class UniversityScheduleRepository(
             Log.e(TAG, "Error importing PDF manually", e)
             val errorMsg = "خطا در وارد کردن فایل PDF: ${e.message}"
             _updateStatus.value = UpdateStatus.Error(errorMsg)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Re-extracts classes from the PDFs already stored on this device — no
+     * network, no downloads, no deletions — and rebuilds the matched schedule.
+     */
+    suspend fun reprocessLocalPdfs(): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            _updateStatus.value = UpdateStatus.Progress("در حال بازخوانی PDFهای ذخیره‌شده...")
+            val cachedFiles = pdfDao.getAllPdfsDirect().mapNotNull { entity ->
+                File(entity.localFilePath).takeIf(File::exists)?.let { entity to it }
+            }
+            if (cachedFiles.isEmpty()) {
+                val msg = "PDF ذخیره‌شده‌ای روی دستگاه نیست؛ ابتدا یک‌بار برنامه را دریافت کنید."
+                _updateStatus.value = UpdateStatus.Error(msg)
+                return@withContext Result.failure(Exception(msg))
+            }
+
+            val processedClasses = mutableListOf<ScheduleClass>()
+            for ((index, entry) in cachedFiles.withIndex()) {
+                val (pdfEntity, file) = entry
+                _updateStatus.value = UpdateStatus.Progress(
+                    "در حال استخراج دوباره (${index + 1} از ${cachedFiles.size}): ${file.name}",
+                    (index + 1).toFloat() / cachedFiles.size
+                )
+                val parseResult = localPdfParser(file, SCHEDULE_ID_UNIVERSITY, context)
+                val extracted = parseResult.classes
+                processedClasses.addAll(extracted)
+                pdfDao.insertOrUpdatePdf(
+                    pdfEntity.copy(
+                        parseStatus = if (extracted.isNotEmpty()) "SUCCESS" else "FAILED",
+                        parseError = parseResult.diagnostics.firstOrNull().takeIf { extracted.isEmpty() },
+                        extractedClassCount = parseResult.normalClasses.size,
+                        extractedWorkshopCount = parseResult.workshopClasses.size
+                    )
+                )
+            }
+
+            if (processedClasses.isEmpty()) {
+                val msg = "PDFها بازخوانی شدند اما کلاسی از آن‌ها استخراج نشد."
+                _updateStatus.value = UpdateStatus.Error(msg)
+                return@withContext Result.failure(Exception(msg))
+            }
+
+            _updateStatus.value = UpdateStatus.Progress("در حال یکسان‌سازی مشخصات کلاس‌ها...")
+            val normalizedClasses = processedClasses.map { course ->
+                course.copy(
+                    courseCode = com.example.domain.normalizer.PersianTextNormalizer.toAsciiDigits(course.courseCode),
+                    groupCode = com.example.domain.normalizer.PersianTextNormalizer.toAsciiDigits(course.groupCode),
+                    startTime = com.example.domain.normalizer.PersianTextNormalizer.normalizeTime(course.startTime),
+                    endTime = com.example.domain.normalizer.PersianTextNormalizer.normalizeTime(course.endTime)
+                )
+            }
+            val distinctClasses = normalizedClasses.distinctBy(ScheduleOfferingIdentity::key)
+
+            val existingSchedule = scheduleDao.getScheduleDirect(SCHEDULE_ID_UNIVERSITY)
+            val scheduleEntity = ScheduleEntity(
+                id = SCHEDULE_ID_UNIVERSITY,
+                title = "برنامه کلاسی دانشگاه",
+                term = existingSchedule?.term ?: "۱۴۰۴-۱۴۰۵-۱",
+                sourceUrl = existingSchedule?.sourceUrl
+                    ?: settingsDao.getSettingDirect(KEY_SOURCE_URL)?.ifBlank { null }
+                    ?: UniversityRemoteDataSource.DEFAULT_SOURCE_URL,
+                updatedAt = System.currentTimeMillis(),
+                totalCourses = distinctClasses.map { it.courseName }.distinct().size,
+                rawJson = ""
+            )
+            _updateStatus.value = UpdateStatus.Progress("در حال ذخیره‌سازی فهرست آماده‌شده...")
+            scheduleDao.saveScheduleWithClasses(scheduleEntity, distinctClasses.map { it.toEntity(SCHEDULE_ID_UNIVERSITY) })
+
+            val availability = dayAvailabilityFlow.firstOrNull().orEmpty().ifEmpty { defaultDayAvailability() }
+            val existingAvailability = availability.associateBy(ScheduleDayAvailability::dayIndex)
+            val parsedAvailability = defaultDayAvailability().map { day ->
+                val classesForDay = distinctClasses.filter { it.dayIndex == day.dayIndex }
+                val previous = existingAvailability[day.dayIndex] ?: day
+                if (classesForDay.isEmpty()) previous
+                else previous.copy(
+                    status = PdfAvailabilityStatus.AVAILABLE,
+                    normalClassCount = classesForDay.count { !it.isWorkshop },
+                    workshopClassCount = classesForDay.count { it.isWorkshop },
+                    checkedAt = System.currentTimeMillis()
+                )
+            }
+            saveAvailability(parsedAvailability)
+
+            _updateStatus.value = UpdateStatus.Success("داده‌ها از PDFهای ذخیره‌شده دوباره استخراج شد (${distinctClasses.size} کلاس).", false)
+            Result.success(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reprocessing local PDFs", e)
+            _updateStatus.value = UpdateStatus.Error("بازاستخراج داده‌ها انجام نشد: ${e.message}")
             Result.failure(e)
         }
     }
@@ -809,43 +933,5 @@ class UniversityScheduleRepository(
             normalized.contains("شنبه") -> 0
             else -> -1
         }
-    }
-
-    private fun ScheduleClassEntity.toDomain(): ScheduleClass {
-        return ScheduleClass(
-            id = id,
-            scheduleId = scheduleId,
-            courseName = courseName,
-            courseCode = courseCode,
-            teacher = teacher,
-            dayOfWeek = dayOfWeek,
-            dayIndex = dayIndex,
-            startTime = startTime,
-            endTime = endTime,
-            classroom = classroom,
-            groupCode = groupCode,
-            parity = parity,
-            units = units,
-            notes = notes
-        )
-    }
-
-    private fun ScheduleClass.toEntity(scheduleId: String): ScheduleClassEntity {
-        return ScheduleClassEntity(
-            id = if (id.isNotBlank()) id else UUID.randomUUID().toString(),
-            scheduleId = scheduleId,
-            courseName = courseName,
-            courseCode = courseCode,
-            teacher = teacher,
-            dayOfWeek = dayOfWeek,
-            dayIndex = dayIndex,
-            startTime = startTime,
-            endTime = endTime,
-            classroom = classroom,
-            groupCode = groupCode,
-            parity = parity,
-            units = units,
-            notes = notes
-        )
     }
 }

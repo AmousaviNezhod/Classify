@@ -94,6 +94,8 @@ fun SettingsScreen(
     onClearPdfs: () -> Unit,
     onForceRefetchAll: () -> Unit,
     onResetAllData: () -> Unit,
+    onReprocessLocalPdfs: () -> Unit = {},
+    isUpdating: Boolean = false,
     onOpenPdfs: () -> Unit = {},
     onOpenComparison: () -> Unit = {},
     onExportFullBackup: () -> Unit = {},
@@ -347,6 +349,26 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Reprocess only the PDFs already stored on this device.
+                OutlinedButton(
+                    onClick = onReprocessLocalPdfs,
+                    enabled = !isUpdating,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("reprocess_local_pdfs_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("بازاستخراج و تطبیق از PDFهای موجود")
+                }
+                Text(
+                    text = "فقط فایل‌های ذخیره‌شده خوانده می‌شوند؛ دانلود یا حذف فایل انجام نمی‌شود.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 // Action buttons
                 OutlinedButton(
                     onClick = onClearCache,
@@ -374,6 +396,7 @@ fun SettingsScreen(
 
                 Button(
                     onClick = onForceRefetchAll,
+                    enabled = !isUpdating,
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.secondary

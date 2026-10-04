@@ -127,9 +127,14 @@ fun HomeScreen(
     val pane = internalTab.coerceIn(0, 2)
     val selectedCatalogOfferingKeys = remember(mySchedule?.classes, universitySchedule?.classes) {
         val catalog = universitySchedule?.classes.orEmpty()
-        mySchedule?.classes.orEmpty().mapNotNull { selected ->
-            ScheduleOfferingIdentity.findCatalogMatch(selected, catalog)?.let(ScheduleOfferingIdentity::key)
-        }.toSet()
+        if (catalog.isEmpty()) emptySet()
+        else {
+            val catalogByDay = catalog.groupBy { it.dayIndex }
+            mySchedule?.classes.orEmpty().mapNotNull { selected ->
+                val dayCatalog = catalogByDay[selected.dayIndex].orEmpty()
+                ScheduleOfferingIdentity.findCatalogMatch(selected, dayCatalog)?.let(ScheduleOfferingIdentity::key)
+            }.toSet()
+        }
     }
     val changeTab: (Int) -> Unit = { index ->
         internalTab = index
@@ -164,7 +169,12 @@ fun HomeScreen(
     )
 
     preview?.let { imported ->
-        val previewItems = imported.classes.distinctBy(ScheduleOfferingIdentity::key)
+        val catalog = universitySchedule?.classes.orEmpty()
+        val previewItems = remember(imported, catalog) {
+            imported.classes
+                .map { ScheduleOfferingIdentity.enrichFromCatalog(it, catalog) }
+                .distinctBy(ScheduleOfferingIdentity::key)
+        }
         AlertDialog(
             onDismissRequest = { preview = null },
             title = { Text("پیش‌نمایش · ${PersianTextNormalizer.toPersianDigits(previewItems.size.toString())} کلاس") },
@@ -186,8 +196,12 @@ fun HomeScreen(
 
     Column(modifier.fillMaxSize()) {
         // Top Tab Navigation Bar
-        val myCoursesCount = mySchedule?.classes.orEmpty().distinctBy(ScheduleOfferingIdentity::key).size
-        val catalogCount = universitySchedule?.classes.orEmpty().distinctBy(ScheduleOfferingIdentity::key).size
+        val myCoursesCount = remember(mySchedule?.classes) {
+            mySchedule?.classes.orEmpty().map { it.semanticKey }.distinct().size
+        }
+        val catalogCount = remember(universitySchedule?.classes) {
+            universitySchedule?.classes.orEmpty().size
+        }
 
         // Counts moved from the tab labels into the panes: three Persian labels of
         // varying length inside one segmented control only stay readable if they
@@ -292,9 +306,10 @@ private fun MyCoursesPane(
 ) {
     val courses = remember(schedule, universitySchedule) {
         val catalogClasses = universitySchedule?.classes.orEmpty()
+        val catalogByDay = catalogClasses.groupBy { it.dayIndex }
         schedule?.classes.orEmpty().map { own ->
-            own to ScheduleOfferingIdentity.enrichFromCatalog(own, catalogClasses)
-        }.distinctBy { ScheduleOfferingIdentity.key(it.first) }
+            own to ScheduleOfferingIdentity.enrichFromCatalog(own, catalogByDay[own.dayIndex].orEmpty())
+        }.distinctBy { it.first.semanticKey }
             .sortedWith(compareBy({ it.second.dayIndex }, { it.second.startTime }))
     }
 
@@ -450,7 +465,7 @@ private fun CatalogPane(
 ) {
     val catalogClasses = schedule?.classes.orEmpty()
     val searchableCatalog = remember(catalogClasses) {
-        catalogClasses.distinctBy(ScheduleOfferingIdentity::key)
+        catalogClasses
             .map { course -> Triple(course, ScheduleOfferingIdentity.key(course), ScheduleOfferingIdentity.searchText(course)) }
             .sortedWith(compareBy({ it.first.dayIndex }, { it.first.startTime }, { it.first.courseName }, { it.first.groupCode }))
     }

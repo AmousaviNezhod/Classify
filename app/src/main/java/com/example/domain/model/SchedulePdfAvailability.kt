@@ -1,5 +1,7 @@
 package com.example.domain.model
 
+import androidx.compose.runtime.Immutable
+
 enum class PdfAvailabilityStatus {
     UNKNOWN,
     AVAILABLE,
@@ -9,6 +11,7 @@ enum class PdfAvailabilityStatus {
     CHECK_FAILED
 }
 
+@Immutable
 data class ScheduleDayAvailability(
     val dayIndex: Int,
     val dayName: String,
@@ -21,6 +24,7 @@ data class ScheduleDayAvailability(
     val checkedAt: Long = 0L
 )
 
+@Immutable
 data class PdfScheduleParseResult(
     val normalClasses: List<ScheduleClass> = emptyList(),
     val workshopClasses: List<ScheduleClass> = emptyList(),

@@ -4,25 +4,27 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
@@ -36,13 +38,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
@@ -179,7 +186,20 @@ fun ScheduleApp(viewModel: MainViewModel) {
     val pdfCount by viewModel.pdfCount.collectAsStateWithLifecycle()
     val isUpdating = updateStatus is UpdateStatus.Progress
 
+    // Hoisted with a stable identity: rebuilding the schedule inline made every
+    // child below see a "changed" parameter on each recomposition pass.
+    val universitySchedule = remember(schedule, dayAvailability) {
+        schedule?.copy(dayAvailability = dayAvailability)
+    }
+
     val isMainTab = currentScreen in MAIN_TAB_ORDER
+
+    // The tab that detail destinations render on top of and return to.
+    val underlyingTab = if (isMainTab) {
+        currentScreen
+    } else {
+        previousScreen.takeIf { it in MAIN_TAB_ORDER } ?: Screen.TODAY
+    }
 
     var toasts by remember { mutableStateOf(emptyList<AppToast>()) }
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -205,6 +225,41 @@ fun ScheduleApp(viewModel: MainViewModel) {
         currentScreen = Screen.COURSE_DETAIL
     }
 
+    // Hardware/gesture back walks one level up the navigation stack; on the root
+    // tab a second press is required to leave the app.
+    val activity = LocalContext.current as? android.app.Activity
+    var lastBackPressedAt by remember { mutableStateOf(0L) }
+    BackHandler {
+        if (currentScreen != Screen.TODAY) lastBackPressedAt = 0L
+        when {
+            currentScreen == Screen.COURSE_DETAIL -> currentScreen = previousScreen
+            currentScreen == Screen.COMPARISON || currentScreen == Screen.PDFS -> currentScreen = previousScreen
+            currentScreen != Screen.TODAY -> {
+                previousScreen = currentScreen
+                currentScreen = Screen.TODAY
+            }
+            else -> {
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressedAt < 2200) {
+                    activity?.finish()
+                } else {
+                    lastBackPressedAt = now
+                    toasts = (toasts + AppToast(
+                        id = System.nanoTime(),
+                        message = "برای خروج، دوباره دکمهٔ بازگشت را بزنید",
+                        type = ToastType.INFO
+                    )).takeLast(3)
+                    coroutineScope.launch {
+                        kotlinx.coroutines.delay(2200)
+                        if (System.currentTimeMillis() - lastBackPressedAt >= 2200) {
+                            toasts = toasts.filterNot { it.message == "برای خروج، دوباره دکمهٔ بازگشت را بزنید" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         GraphiteBackdrop()
 
@@ -228,7 +283,10 @@ fun ScheduleApp(viewModel: MainViewModel) {
                         themeMode = themeMode,
                         onToggleTheme = viewModel::toggleThemeMode,
                         onRefresh = { viewModel.triggerUpdate(forceRedownload = false) },
-                        onOpenSettings = { currentScreen = Screen.SETTINGS }
+                        onOpenSettings = {
+                            previousScreen = currentScreen
+                            currentScreen = Screen.SETTINGS
+                        }
                     )
                 }
             },
@@ -247,7 +305,10 @@ fun ScheduleApp(viewModel: MainViewModel) {
                             selectedIndex = MAIN_TAB_ORDER.indexOf(currentScreen).coerceAtLeast(0),
                             onSelect = { index ->
                                 val destination = MAIN_TAB_ORDER.getOrNull(index) ?: return@AppBottomBar
-                                if (destination != currentScreen) currentScreen = destination
+                                if (destination != currentScreen) {
+                                    previousScreen = currentScreen
+                                    currentScreen = destination
+                                }
                             },
                             modifier = Modifier.widthIn(max = 520.dp)
                         )
@@ -265,34 +326,33 @@ fun ScheduleApp(viewModel: MainViewModel) {
                     }
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                         Box(Modifier.widthIn(max = 1040.dp).fillMaxSize()) {
-                            // Depth-aware transition: deeper screens enter from the start
-                            // (left, in RTL) and the outgoing screen retreats to the end,
-                            // so the motion reads as forward/back rather than a generic fade.
-                            AnimatedContent(
-                                targetState = currentScreen,
-                                modifier = Modifier.fillMaxSize().clipToBounds(),
-                                transitionSpec = {
-                                    val goingDeeper = screenRank(targetState) > screenRank(initialState)
-                                    val sign = if (goingDeeper) -1 else 1
-                                    val travel = { full: Int -> sign * (full / 5) }
-                                    (
-                                        slideInHorizontally(
-                                            animationSpec = AppMotion.springGlideOffset,
-                                            initialOffsetX = travel
-                                        ) + fadeIn(tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseOut))
-                                    ).togetherWith(
-                                        slideOutHorizontally(
-                                            animationSpec = tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseIn),
-                                            targetOffsetX = { full -> -sign * (full / 8) }
-                                        ) + fadeOut(tween(AppMotion.DURATION_QUICK, easing = AppMotion.EaseIn))
-                                    )
-                                },
-                                label = "screenTransition"
-                            ) { screen ->
-                                when (screen) {
+                            // Main tabs live in a keep-alive layer: each tab is composed at
+                            // most once and switching between them moves layer transforms
+                            // only, so a tap never pays a fresh composition of a whole
+                            // screen. Hidden tabs park fully off-canvas, which also keeps
+                            // them out of hit testing.
+                            // Detail destinations open on top of the tabs layer; since
+                            // screens are transparent over the backdrop, the tabs must
+                            // fade away underneath or they show through the detail page.
+                            val tabsAlpha by animateFloatAsState(
+                                targetValue = if (isMainTab) 1f else 0f,
+                                animationSpec = tween(
+                                    durationMillis = if (isMainTab) AppMotion.DURATION_BASE else AppMotion.DURATION_QUICK,
+                                    easing = if (isMainTab) AppMotion.EaseOut else AppMotion.EaseIn
+                                ),
+                                label = "tabsAlpha"
+                            )
+                            MainTabsLayer(
+                                currentTab = underlyingTab,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clipToBounds()
+                                    .graphicsLayer { alpha = tabsAlpha }
+                            ) { tab ->
+                                when (tab) {
                                     Screen.TODAY -> TodayScreen(
                                         myClasses = mySchedule?.classes.orEmpty(),
-                                        universitySchedule = schedule?.copy(dayAvailability = dayAvailability),
+                                        universitySchedule = universitySchedule,
                                         events = allEvents,
                                         tasks = allTasks,
                                         isUpdating = isUpdating,
@@ -307,7 +367,7 @@ fun ScheduleApp(viewModel: MainViewModel) {
 
                                     Screen.COURSES -> HomeScreen(
                                         mySchedule = mySchedule,
-                                        universitySchedule = schedule?.copy(dayAvailability = dayAvailability),
+                                        universitySchedule = universitySchedule,
                                         selectedTab = coursesTab,
                                         inputJson = inputJson,
                                         searchQuery = searchQuery,
@@ -352,9 +412,11 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                         onClearCache = viewModel::clearCache,
                                         onClearPdfs = viewModel::clearDownloadedPdfs,
                                         onForceRefetchAll = { viewModel.triggerUpdate(forceRedownload = true) },
+                                        onReprocessLocalPdfs = viewModel::reprocessLocalPdfs,
+                                        isUpdating = isUpdating,
                                         onResetAllData = viewModel::resetAllData,
-                                        onOpenPdfs = { currentScreen = Screen.PDFS },
-                                        onOpenComparison = { currentScreen = Screen.COMPARISON; viewModel.loadComparison() },
+                                        onOpenPdfs = { previousScreen = Screen.SETTINGS; currentScreen = Screen.PDFS },
+                                        onOpenComparison = { previousScreen = Screen.SETTINGS; currentScreen = Screen.COMPARISON; viewModel.loadComparison() },
                                         onExportFullBackup = {
                                             coroutineScope.launch {
                                                 val backupJson = viewModel.createFullBackup()
@@ -375,58 +437,117 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                             val scheduleJson = viewModel.exportScheduleJson()
                                             viewModel.shareExportFile(context, scheduleJson, "unit_selection_schedule.json", "اشتراک برنامه کلاسی")
                                         },
-                                        onBack = { currentScreen = Screen.TODAY }
+                                        onBack = {
+                                            currentScreen = previousScreen.takeIf { it in MAIN_TAB_ORDER } ?: Screen.TODAY
+                                        }
                                     )
 
-                                    Screen.COURSE_DETAIL -> {
-                                        val currentCourse = selectedCourseForDetail
-                                        if (currentCourse != null) {
-                                            val courseKey = currentCourse.semanticKey
-                                            val courseSessions = mySchedule?.classes.orEmpty().filter {
-                                                it.semanticKey == courseKey || it.courseName == currentCourse.courseName
-                                            }
-                                            val courseEvents = allEvents.filter { it.courseKey == courseKey }
-                                            val courseTasks = allTasks.filter { it.courseKey == courseKey }
-                                            val courseNotes by viewModel.notesForCourse(courseKey).collectAsStateWithLifecycle(emptyList())
+                                    else -> Unit
+                                }
+                            }
 
-                                            CourseDetailScreen(
-                                                course = currentCourse,
-                                                allSessions = courseSessions,
-                                                events = courseEvents,
-                                                tasks = courseTasks,
-                                                notes = courseNotes,
-                                                onBack = { currentScreen = previousScreen },
-                                                onDeleteCourse = {
-                                                    viewModel.deleteCourseCascade(courseKey)
+                            // Block touches on the transparent space around the detail
+                            // destination, while leaving its own controls interactive.
+                            if (!isMainTab) {
+                                Spacer(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .pointerInput(Unit) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    awaitPointerEvent().changes.forEach { it.consume() }
+                                                }
+                                            }
+                                        }
+                                )
+                            }
+
+                            // Depth-aware transition for pushed destinations: deeper
+                            // screens enter from the start (left, in RTL) and the outgoing
+                            // screen retreats to the end, so the motion reads as
+                            // forward/back rather than a generic fade.
+                            AnimatedContent(
+                                targetState = if (isMainTab) null else currentScreen,
+                                modifier = Modifier.fillMaxSize().clipToBounds(),
+                                transitionSpec = {
+                                    val fromRank = initialState?.let(::screenRank) ?: screenRank(underlyingTab)
+                                    val toRank = targetState?.let(::screenRank) ?: screenRank(underlyingTab)
+                                    val goingDeeper = toRank > fromRank
+                                    val sign = if (goingDeeper) -1 else 1
+                                    val travel = { full: Int -> sign * (full / 5) }
+                                    slideInHorizontally(
+                                        animationSpec = AppMotion.springGlideOffset,
+                                        initialOffsetX = travel
+                                    ).togetherWith(
+                                        slideOutHorizontally(
+                                            animationSpec = tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseIn),
+                                            targetOffsetX = { full -> -sign * (full / 8) }
+                                        )
+                                    )
+                                },
+                                label = "detailTransition"
+                            ) { detailScreen ->
+                                if (detailScreen != null) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(MaterialTheme.colorScheme.background)
+                                    ) {
+                                        when (detailScreen) {
+                                            Screen.COURSE_DETAIL -> {
+                                                val currentCourse = selectedCourseForDetail
+                                                if (currentCourse != null) {
+                                                    val courseKey = currentCourse.semanticKey
+                                                    val courseSessions = mySchedule?.classes.orEmpty().filter {
+                                                        it.semanticKey == courseKey || it.courseName == currentCourse.courseName
+                                                    }
+                                                    val courseEvents = allEvents.filter { it.courseKey == courseKey }
+                                                    val courseTasks = allTasks.filter { it.courseKey == courseKey }
+                                                    val notesFlow = remember(courseKey) { viewModel.notesForCourse(courseKey) }
+                                                    val courseNotes by notesFlow.collectAsStateWithLifecycle(emptyList())
+
+                                                    CourseDetailScreen(
+                                                        course = currentCourse,
+                                                        allSessions = courseSessions,
+                                                        events = courseEvents,
+                                                        tasks = courseTasks,
+                                                        notes = courseNotes,
+                                                        onBack = { currentScreen = previousScreen },
+                                                        onDeleteCourse = {
+                                                            viewModel.deleteCourseCascade(courseKey)
+                                                            currentScreen = Screen.COURSES
+                                                        },
+                                                        onAddOrUpdateEvent = viewModel::upsertEvent,
+                                                        onDeleteEvent = viewModel::deleteEvent,
+                                                        onToggleEventCompleted = viewModel::toggleEventCompleted,
+                                                        onAddOrUpdateTask = viewModel::upsertTask,
+                                                        onDeleteTask = viewModel::deleteTask,
+                                                        onToggleTaskDone = viewModel::toggleTaskDone,
+                                                        onAddOrUpdateNote = viewModel::upsertNote,
+                                                        onDeleteNote = viewModel::deleteNote
+                                                    )
+                                                } else {
                                                     currentScreen = Screen.COURSES
-                                                },
-                                                onAddOrUpdateEvent = viewModel::upsertEvent,
-                                                onDeleteEvent = viewModel::deleteEvent,
-                                                onToggleEventCompleted = viewModel::toggleEventCompleted,
-                                                onAddOrUpdateTask = viewModel::upsertTask,
-                                                onDeleteTask = viewModel::deleteTask,
-                                                onToggleTaskDone = viewModel::toggleTaskDone,
-                                                onAddOrUpdateNote = viewModel::upsertNote,
-                                                onDeleteNote = viewModel::deleteNote
+                                                }
+                                            }
+
+                                            Screen.COMPARISON -> ComparisonScreen(
+                                                summary = comparisonSummary,
+                                                onRefreshComparison = viewModel::loadComparison,
+                                                onBack = { currentScreen = previousScreen }
                                             )
-                                        } else {
-                                            currentScreen = Screen.COURSES
+
+                                            Screen.PDFS -> PdfManagerScreen(
+                                                pdfs = downloadedPdfs,
+                                                onImportPdf = viewModel::importPdf,
+                                                onOpenPdf = viewModel::openPdf,
+                                                onDeletePdf = viewModel::deletePdf,
+                                                onBack = { currentScreen = previousScreen }
+                                            )
+
+                                            else -> Unit
                                         }
                                     }
-
-                                    Screen.COMPARISON -> ComparisonScreen(
-                                        summary = comparisonSummary,
-                                        onRefreshComparison = viewModel::loadComparison,
-                                        onBack = { currentScreen = Screen.SETTINGS }
-                                    )
-
-                                    Screen.PDFS -> PdfManagerScreen(
-                                        pdfs = downloadedPdfs,
-                                        onImportPdf = viewModel::importPdf,
-                                        onOpenPdf = viewModel::openPdf,
-                                        onDeletePdf = viewModel::deletePdf,
-                                        onBack = { currentScreen = Screen.SETTINGS }
-                                    )
                                 }
                             }
                         }
@@ -442,6 +563,79 @@ fun ScheduleApp(viewModel: MainViewModel) {
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = if (isMainTab) 84.dp else 12.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Keep-alive host for the main bottom-bar tabs.
+ *
+ * Every tab is composed at most once and then stays in the composition, so
+ * switching tabs moves layer transforms only (alpha + translation) instead of
+ * recomposing a whole screen from scratch — the first frame after a tap is just
+ * a state flip. Hidden tabs park just past the screen edge: out of sight, and
+ * because hit testing follows layer transforms, completely out of the input
+ * pipeline as well.
+ */
+@Composable
+private fun MainTabsLayer(
+    currentTab: Screen,
+    modifier: Modifier = Modifier,
+    content: @Composable (Screen) -> Unit
+) {
+    val visited = remember { mutableStateListOf<Screen>() }
+    if (currentTab !in visited) visited.add(currentTab)
+
+    // Pre-warm the remaining tabs one per frame after the first paint so the
+    // first visit to every tab is already cached.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        MAIN_TAB_ORDER.forEach { tab ->
+            if (tab !in visited) {
+                withFrameNanos { }
+                visited.add(tab)
+            }
+        }
+    }
+
+    Box(modifier) {
+        visited.forEach { tab ->
+            key(tab) {
+                val selected = tab == currentTab
+                val tabRank = MAIN_TAB_ORDER.indexOf(tab)
+                val currentRank = MAIN_TAB_ORDER.indexOf(currentTab)
+                // Hidden tabs park on the side they travel to: shallower tabs to
+                // the end, deeper tabs to the start (RTL), mirroring the
+                // depth-aware push/pop motion used for detail destinations.
+                val parked = when {
+                    selected -> 0f
+                    tabRank < currentRank -> 1.15f
+                    else -> -1.15f
+                }
+                val offset by animateFloatAsState(
+                    targetValue = parked,
+                    animationSpec = if (selected) AppMotion.springGlide
+                    else tween(AppMotion.DURATION_BASE, easing = AppMotion.EaseIn),
+                    label = "tabOffset"
+                )
+                val alpha by animateFloatAsState(
+                    targetValue = if (selected) 1f else 0f,
+                    animationSpec = tween(
+                        durationMillis = if (selected) AppMotion.DURATION_BASE else AppMotion.DURATION_QUICK,
+                        easing = if (selected) AppMotion.EaseOut else AppMotion.EaseIn
+                    ),
+                    label = "tabAlpha"
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            this.alpha = alpha
+                            translationX = offset * size.width
+                        }
+                ) {
+                    content(tab)
+                }
             }
         }
     }

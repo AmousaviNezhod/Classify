@@ -21,8 +21,10 @@ object PdfScheduleParser {
     private const val POSITIONED_PREFIX = "@@ROW@@"
     private val devDiagnosticsEnabled = BuildConfig.DEBUG
     private val rowRegex = Regex("^@@ROW@@([0-9]+),([0-9.]+)@@(.*)$")
-    private val cellRegex = Regex("⟦(-?[0-9]+)⟧([^⟦]*)")
-    private data class Cell(val x: Float, val text: String)
+    private val cellRegex = Regex("⟦(-?[0-9]+)(?::(-?[0-9]+))?⟧([^⟦]*)")
+    private data class Cell(val x: Float, val maxX: Float = x, val text: String) {
+        val centerX: Float get() = (x + maxX) / 2f
+    }
     private data class Row(val page: Int, val y: Float, val cells: List<Cell>)
     private data class Glyph(val page: Int, val x: Float, val y: Float, val width: Float, val fontSize: Float, val text: String)
     private data class TimeSlot(val left: Float, val right: Float, val start: String, val end: String)
@@ -140,11 +142,12 @@ object PdfScheduleParser {
                     } else chunks += mutableListOf(glyph)
                 }
                 val cells = chunks.mapNotNull { chunk ->
-                    val rtl = chunk.any { glyph -> glyph.text.any { it in '\u0600'..'\u06FF' } }
+                    val rtl = chunk.any { glyph -> glyph.text.any { it in '\u0600'..'\u06FF' && !it.isDigit() } }
                     val ordered = if (rtl) chunk.sortedByDescending(Glyph::x) else chunk.sortedBy(Glyph::x)
+                    val sequenced = restoreLtrRuns(ordered, rtl)
                     val value = buildString {
                         var previous: Glyph? = null
-                        ordered.forEach { glyph ->
+                        sequenced.forEach { glyph ->
                             val prior = previous
                             val gap = prior?.let {
                                 if (rtl) it.x - (glyph.x + glyph.width) else glyph.x - (it.x + it.width)
@@ -154,15 +157,42 @@ object PdfScheduleParser {
                             previous = glyph
                         }
                     }.trim()
-                    value.takeIf(String::isNotBlank)?.let { Cell(chunk.minOf(Glyph::x), PersianTextNormalizer.normalizeText(it)) }
+                    val minX = chunk.minOf(Glyph::x)
+                    val maxX = chunk.maxOf { it.x + it.width }
+                    value.takeIf(String::isNotBlank)?.let { Cell(minX, maxX, PersianTextNormalizer.normalizeText(it)) }
                 }
                 if (cells.isEmpty()) null else Row(page, baseline.map(Glyph::y).average().toFloat(), cells)
             }
         }
         return rows.joinToString("\n") { row ->
-            val cells = row.cells.sortedBy(Cell::x).joinToString("") { "⟦${it.x.toInt()}⟧${it.text}" }
+            val cells = row.cells.sortedBy(Cell::x).joinToString("") { "⟦${it.x.toInt()}:${it.maxX.toInt()}⟧${it.text}" }
             "$POSITIONED_PREFIX${row.page},${"%.1f".format(Locale.US, row.y)}@@$cells"
         }
+    }
+
+    private fun isLtrGlyph(glyph: Glyph): Boolean = glyph.text.all { ch ->
+        ch.isDigit() || ch == '/' || ch == '.' || ch == ':' || ch == '-' ||
+            (ch.code < 0x0600 && ch.isLetter())
+    }
+
+    /**
+     * An RTL glyph walk visits embedded LTR runs (room numbers like 1/207, times
+     * like 16-18) right-to-left, which reverses them ("702/1"). Re-order each LTR
+     * run back to logical order so numbers keep their meaning.
+     */
+    private fun restoreLtrRuns(ordered: List<Glyph>, rtl: Boolean): List<Glyph> {
+        if (!rtl) return ordered
+        val restored = mutableListOf<Glyph>()
+        val run = mutableListOf<Glyph>()
+        fun flush() {
+            restored.addAll(run.asReversed())
+            run.clear()
+        }
+        for (glyph in ordered) {
+            if (isLtrGlyph(glyph)) run += glyph else { flush(); restored += glyph }
+        }
+        flush()
+        return restored
     }
 
     private fun parseTextCandidates(texts: List<String>, scheduleId: String, sourceTag: String): PdfScheduleParseResult {
@@ -238,11 +268,13 @@ object PdfScheduleParser {
     }
 
     private fun normalizeAndValidate(classes: List<ScheduleClass>): List<ScheduleClass> = classes.map { course ->
+        val stdDay = PersianTextNormalizer.normalizeDay(course.dayOfWeek)
         course.copy(
             courseName = PersianTextNormalizer.normalizeCourseName(course.courseName),
             courseCode = PersianTextNormalizer.toAsciiDigits(course.courseCode),
             teacher = PersianTextNormalizer.normalizeText(course.teacher),
-            dayOfWeek = PersianTextNormalizer.normalizeText(course.dayOfWeek),
+            dayOfWeek = stdDay.first,
+            dayIndex = if (course.dayIndex in 0..6) course.dayIndex else stdDay.second,
             groupCode = PersianTextNormalizer.toAsciiDigits(course.groupCode),
             classroom = PersianTextNormalizer.normalizeText(course.classroom),
             startTime = PersianTextNormalizer.normalizeTime(course.startTime),
@@ -259,8 +291,10 @@ object PdfScheduleParser {
     private fun parsePositionedRow(line: String): Row? {
         val match = rowRegex.matchEntire(line) ?: return null
         val cells = cellRegex.findAll(match.groupValues[3]).mapNotNull { cellMatch ->
-            val value = PersianTextNormalizer.normalizeText(cellMatch.groupValues[2])
-            value.takeIf(String::isNotBlank)?.let { Cell(cellMatch.groupValues[1].toFloat(), it) }
+            val value = PersianTextNormalizer.normalizeText(cellMatch.groupValues[3])
+            val minX = cellMatch.groupValues[1].toFloatOrNull() ?: return@mapNotNull null
+            val maxX = cellMatch.groupValues[2].takeIf(String::isNotBlank)?.toFloatOrNull() ?: minX
+            value.takeIf(String::isNotBlank)?.let { Cell(minX, maxX, it) }
         }.toList()
         return Row(match.groupValues[1].toInt(), match.groupValues[2].toFloat(), cells)
     }
@@ -528,60 +562,86 @@ object PdfScheduleParser {
 
     /** Existing room/time workshop-table parser; invoked only for the workshop layout. */
     private fun parsePositionedRows(text: String, scheduleId: String, sourceTag: String): List<ScheduleClass> {
-        val pages = text.lines().mapNotNull { line ->
-            val m = rowRegex.matchEntire(line) ?: return@mapNotNull null
-            val cells = cellRegex.findAll(m.groupValues[3]).mapNotNull { cm ->
-                val value = PersianTextNormalizer.normalizeText(cm.groupValues[2])
-                value.takeIf(String::isNotBlank)?.let { Cell(cm.groupValues[1].toFloat(), it) }
-            }.toList()
-            Row(m.groupValues[1].toInt(), m.groupValues[2].toFloat(), cells)
-        }.groupBy(Row::page).toSortedMap()
+        val pages = text.lines().mapNotNull(::parsePositionedRow).groupBy(Row::page).toSortedMap()
         val roomRegex = Regex("(?:[1-3]/[0-9۰-۹]{1,3}|سایت\\s*[0-9۰-۹]+)")
         val teacherRegex = Regex("^(?:(?:(?:خانم|آقای)\\s+)?(?:مهندس|دکتر|استاد)\\s+|سید\\s+).{2,}$")
-        val defaultTimes = listOf("18:00" to "20:00", "16:00" to "18:00", "14:00" to "16:00", "12:00" to "14:00", "10:00" to "12:00", "08:00" to "10:00", "07:00" to "08:00")
         val results = mutableListOf<ScheduleClass>()
         var activeDay: Pair<String, Int> = "شنبه" to 0
         pages.forEach { (pageNumber, unsortedRows) ->
             val rows = unsortedRows.sortedBy(Row::y)
             val pageDay = activeDay
-            var timeColumns = listOf(76f, 174f, 271f, 367f, 464f, 563f, 638f).zip(defaultTimes)
-            val explicitDay = rows.firstOrNull { row -> row.cells.any { cell ->
-                val label = cell.text.trim()
-                label in listOf("شنبه", "یکشنبه", "دوشنبه", "سه شنبه", "سهشنبه", "چهارشنبه", "چهار شنبه", "پنجشنبه", "پنج شنبه")
-            } }?.let { normalizeWorkshopDay(it.cells.joinToString(" ") { cell -> cell.text }) } ?: when (pageNumber) {
-                3 -> "شنبه" to 0
-                4 -> "یکشنبه" to 1
-                5 -> "دوشنبه" to 2
-                6 -> "سه‌شنبه" to 3
-                7 -> "چهارشنبه" to 4
-                8 -> "پنج‌شنبه" to 5
+            val explicitDay = rows.firstNotNullOfOrNull { row ->
+                row.cells.firstNotNullOfOrNull { cell ->
+                    val clean = PersianTextNormalizer.normalizeDay(cell.text)
+                    if (clean.first in listOf("شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه")) clean else null
+                }
+            } ?: when (pageNumber) {
+                2 -> "شنبه" to 0
+                3 -> "یکشنبه" to 1
+                4 -> "دوشنبه" to 2
+                5 -> "سه‌شنبه" to 3
+                6 -> "چهارشنبه" to 4
+                7 -> "پنج‌شنبه" to 5
                 else -> null
             }
             val hasWorkshopHeader = rows.any { row -> row.cells.any { cell -> cell.text.contains("کارگاه") || cell.text.contains("آزمایشگاه") || cell.text.contains("سایت") } }
-        val schedulePage = rows.any { row -> row.cells.any { cell -> Regex("[0-9۰-۹]{1,2}\\s*-\\s*[0-9۰-۹]{1,2}").containsMatchIn(cell.text) } } &&
-            rows.any { row -> row.cells.any { cell -> cell.x > 620f && roomRegex.containsMatchIn(cell.text) } } &&
-            rows.any { row -> row.cells.any { it.text.trim() in listOf("اتاق", "ساعت", "اتاق ساعت", "ساعت اتاق") } } && hasWorkshopHeader
+            val schedulePage = rows.any { row -> row.cells.any { cell -> Regex("[0-9۰-۹]{1,2}\\s*-\\s*[0-9۰-۹]{1,2}").containsMatchIn(cell.text) } } &&
+                rows.any { row -> row.cells.any { cell -> cell.centerX > 620f && roomRegex.containsMatchIn(cell.text) } } &&
+                rows.any { row -> row.cells.any { it.text.trim() in listOf("اتاق", "ساعت", "اتاق ساعت", "ساعت اتاق") } } && hasWorkshopHeader
             if (!schedulePage) return@forEach
-            if (schedulePage && explicitDay != null) activeDay = explicitDay
-            val dayForPage = if (schedulePage) explicitDay ?: pageDay else pageDay
-            rows.forEach { row ->
-                val headerSlots = row.cells.mapNotNull { cell ->
+            if (explicitDay != null) activeDay = explicitDay
+            val dayForPage = explicitDay ?: pageDay
+
+            var parsedTimeSlots = listOf(
+                TimeSlot(Float.NEGATIVE_INFINITY, 122f, "18:00", "20:00"),
+                TimeSlot(122f, 219.75f, "16:00", "18:00"),
+                TimeSlot(219.75f, 317.75f, "14:00", "16:00"),
+                TimeSlot(317.75f, 416f, "12:00", "14:00"),
+                TimeSlot(416f, 514f, "10:00", "12:00"),
+                TimeSlot(514f, 599.5f, "08:00", "10:00"),
+                TimeSlot(599.5f, Float.POSITIVE_INFINITY, "07:00", "08:00")
+            )
+            val timeHeaderRow = rows.firstOrNull { row ->
+                row.cells.count { cell ->
+                    Regex("([0-9۰-۹]{1,2})\\s*-\\s*([0-9۰-۹]{1,2})").containsMatchIn(cell.text)
+                } >= 4
+            }
+            if (timeHeaderRow != null) {
+                val parsedHeaders = timeHeaderRow.cells.mapNotNull { cell ->
                     val m = Regex("([0-9۰-۹]{1,2})\\s*-\\s*([0-9۰-۹]{1,2})").find(cell.text) ?: return@mapNotNull null
                     val start = PersianTextNormalizer.toAsciiDigits(m.groupValues[1]).toIntOrNull() ?: return@mapNotNull null
                     val end = PersianTextNormalizer.toAsciiDigits(m.groupValues[2]).toIntOrNull() ?: return@mapNotNull null
-                    cell.x to ("%02d:00".format(start) to "%02d:00".format(end))
+                    Triple(cell.centerX, "%02d:00".format(start), "%02d:00".format(end))
+                }.sortedBy { it.first }
+                if (parsedHeaders.size >= 4) {
+                    val edges = parsedHeaders.map { it.first }.zipWithNext().map { (c1, c2) -> (c1 + c2) / 2f }
+                    parsedTimeSlots = parsedHeaders.mapIndexed { index, triple ->
+                        TimeSlot(
+                            left = if (index == 0) Float.NEGATIVE_INFINITY else edges[index - 1],
+                            right = if (index == parsedHeaders.lastIndex) Float.POSITIVE_INFINITY else edges[index],
+                            start = triple.second,
+                            end = triple.third
+                        )
+                    }
                 }
-                if (headerSlots.size >= 5) timeColumns = headerSlots.sortedBy { it.first }
             }
+
+            fun slotFor(centerX: Float): Pair<String, String> {
+                val slot = parsedTimeSlots.firstOrNull { centerX >= it.left && centerX < it.right }
+                return if (slot != null) slot.start to slot.end
+                else parsedTimeSlots.minByOrNull { kotlin.math.abs((it.left + it.right) / 2f - centerX) }?.let { it.start to it.end }
+                    ?: ("08:00" to "10:00")
+            }
+
             rows.forEachIndexed { index, roomRow ->
-                val roomCell = roomRow.cells.firstOrNull { it.x > 620f && roomRegex.containsMatchIn(it.text) } ?: return@forEachIndexed
+                val roomCell = roomRow.cells.firstOrNull { it.centerX > 620f && roomRegex.containsMatchIn(it.text) } ?: return@forEachIndexed
                 val courseRow = rows.getOrNull(index - 1) ?: return@forEachIndexed
                 val teacherRow = rows.getOrNull(index + 1) ?: return@forEachIndexed
                 if (roomRow.y - courseRow.y !in 3f..22f || teacherRow.y - roomRow.y !in 3f..22f) return@forEachIndexed
                 val roomPrefix = roomRow.cells.firstOrNull { it.text == "نظام مهندسی" }?.text.orEmpty()
                 val classroom = formatRoom(listOf(roomPrefix, roomCell.text).filter(String::isNotBlank).joinToString(" "))
                 val courses = courseRow.cells.filter { cell ->
-                    cell.x < 620f && cell.text.isNotBlank() && !cell.text.contains("ساعت") &&
+                    cell.centerX < 620f && cell.text.isNotBlank() && !cell.text.contains("ساعت") &&
                         !teacherRegex.containsMatchIn(cell.text) && !roomRegex.containsMatchIn(cell.text) &&
                         !cell.text.matches(Regex("[0-9۰-۹\\s./-]+")) && cell.text != "نظام مهندسی"
                 }
@@ -590,24 +650,24 @@ object PdfScheduleParser {
                     previous.cells.any { it.text.trim() in listOf("ساعت", "اتاق", "اتاق ساعت", "ساعت اتاق") || it.text.contains("18 - 20") }
                 }
                 val isTrailingRoomLabel = hasTableHeaderNearby && courseRow.cells.any { cell ->
-                    cell.x > 620f && (cell.text.contains("اتاق") || cell.text.contains("ساعت"))
+                    cell.centerX > 620f && (cell.text.contains("اتاق") || cell.text.contains("ساعت"))
                 }
                 courses.forEach courseLoop@{ course ->
                     val name = course.text.replace(Regex("\\s{2,}"), " ").trim()
                     if (name.isBlank() || isTrailingRoomLabel) return@courseLoop
-                    val time = timeColumns.minByOrNull { kotlin.math.abs(it.first - course.x) }?.second ?: ("08:00" to "10:00")
-                    val teacher = teachers.minByOrNull { kotlin.math.abs(it.x - course.x) }?.text.orEmpty()
+                    val time = slotFor(course.centerX)
+                    val teacher = teachers.minByOrNull { kotlin.math.abs(it.centerX - course.centerX) }?.text.orEmpty()
                     val parity = when { name.contains("زوج") -> "زوج"; name.contains("فرد") -> "فرد"; else -> "" }
                     results += ScheduleClass(
                         id = "${scheduleId}_position_${UUID.randomUUID().toString().take(8)}", scheduleId = scheduleId,
                         courseName = name.replace(Regex("\\s*\\((?:زوج|فرد)\\)"), "").trim(), teacher = teacher,
                         dayOfWeek = dayForPage.first, dayIndex = dayForPage.second,
                         startTime = time.first, endTime = time.second, classroom = classroom,
-                        groupCode = "1", parity = parity,
-                        notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "آزمایشگاه / کارگاه / سایت")
+                        groupCode = "", parity = parity,
+                        notes = listOfNotNull("آزمایشگاه / کارگاه / سایت", sourceTag.takeIf(String::isNotBlank)?.let { "منبع: $it" }).joinToString(" - "))
                 }
             }
-            if (schedulePage && explicitDay == null && pageNumber < 3) activeDay = nextWorkshopDay(activeDay)
+            if (explicitDay == null && pageNumber < 3) activeDay = nextWorkshopDay(activeDay)
         }
         return results
     }
@@ -711,7 +771,8 @@ object PdfScheduleParser {
                     id = "${scheduleId}_lab_${UUID.randomUUID().toString().take(8)}", scheduleId = scheduleId,
                     courseName = PersianTextNormalizer.cleanCourseName(course), teacher = PersianTextNormalizer.normalizeText(teacher),
                     dayOfWeek = day.first, dayIndex = day.second, startTime = slot.first, endTime = slot.second,
-                    classroom = classroom, groupCode = "1", notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "آزمایشگاه / کارگاه / سایت")
+                    classroom = classroom, groupCode = "1",
+                    notes = listOfNotNull("آزمایشگاه / کارگاه / سایت", sourceTag.takeIf(String::isNotBlank)?.let { "منبع: $it" }).joinToString(" - "))
             }
         }
         return results

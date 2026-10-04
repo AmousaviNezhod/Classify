@@ -1,5 +1,8 @@
 package com.example.domain.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class ScheduleValidationInfo(
     val capacity: Boolean = true,
     val duplicate: Boolean = true,
@@ -10,6 +13,7 @@ data class ScheduleValidationInfo(
 /**
  * Normalized representation of a full weekly university schedule.
  */
+@Immutable
 data class NormalizedSchedule(
     val id: String = "latest_schedule",
     val title: String = "برنامه کلاسی دانشگاه",

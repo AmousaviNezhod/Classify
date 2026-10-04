@@ -1,8 +1,11 @@
 package com.example.domain.model
 
+import androidx.compose.runtime.Immutable
+
 /**
  * Normalized representation of a single university class session.
  */
+@Immutable
 data class ScheduleClass(
     val id: String = "",
     val scheduleId: String = "",
@@ -24,4 +27,9 @@ data class ScheduleClass(
      */
     val semanticKey: String
         get() = "${courseName.trim().lowercase()}_${groupCode.trim().ifEmpty { "0" }}"
+
+    val isWorkshop: Boolean
+        get() = notes.contains("آزمایشگاه") || notes.contains("کارگاه") || notes.contains("سایت") ||
+            classroom.contains("کارگاه") || classroom.contains("سایت") || classroom.contains("آزمایشگاه") ||
+            courseName.contains("کارگاه") || courseName.contains("آزمایشگاه")
 }

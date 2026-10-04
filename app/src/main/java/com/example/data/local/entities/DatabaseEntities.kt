@@ -32,6 +32,40 @@ data class ScheduleClassEntity(
     val parity: String = "",
     val units: Int = 0,
     val notes: String = ""
+) {
+    fun toDomain(): com.example.domain.model.ScheduleClass = com.example.domain.model.ScheduleClass(
+        id = id,
+        scheduleId = scheduleId,
+        courseName = courseName,
+        courseCode = courseCode,
+        teacher = teacher,
+        dayOfWeek = dayOfWeek,
+        dayIndex = dayIndex,
+        startTime = startTime,
+        endTime = endTime,
+        classroom = classroom,
+        groupCode = groupCode,
+        parity = parity,
+        units = units,
+        notes = notes
+    )
+}
+
+fun com.example.domain.model.ScheduleClass.toEntity(scheduleId: String = this.scheduleId): ScheduleClassEntity = ScheduleClassEntity(
+    id = id.ifBlank { "${scheduleId}_${java.util.UUID.randomUUID().toString().take(8)}" },
+    scheduleId = scheduleId,
+    courseName = courseName,
+    courseCode = courseCode,
+    teacher = teacher,
+    dayOfWeek = dayOfWeek,
+    dayIndex = dayIndex,
+    startTime = startTime,
+    endTime = endTime,
+    classroom = classroom,
+    groupCode = groupCode,
+    parity = parity,
+    units = units,
+    notes = notes
 )
 
 @Entity(tableName = "downloaded_pdfs")

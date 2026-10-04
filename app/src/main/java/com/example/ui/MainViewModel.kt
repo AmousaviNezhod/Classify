@@ -26,6 +26,7 @@ import com.example.domain.parser.JsonScheduleParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,24 @@ import java.io.File
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        /**
+         * Fills classroom/teacher/parity blanks of the imported schedule from the
+         * university catalog in one place, so Today, Calendar and Courses all show
+         * the same locations instead of "مکان مشخص نشده".
+         */
+        fun enrichMySchedule(schedule: NormalizedSchedule, catalog: NormalizedSchedule?): NormalizedSchedule {
+            val catalogClasses = catalog?.classes.orEmpty()
+            if (catalogClasses.isEmpty()) return schedule
+            val catalogByDay = catalogClasses.groupBy { it.dayIndex }
+            return schedule.copy(
+                classes = schedule.classes.map {
+                    ScheduleOfferingIdentity.enrichFromCatalog(it, catalogByDay[it.dayIndex].orEmpty())
+                }
+            )
+        }
+    }
+
     private val repository = UniversityScheduleRepository(application.applicationContext)
 
     val schedule: StateFlow<NormalizedSchedule?> = repository.universityScheduleFlow
@@ -46,10 +65,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = null
         )
 
-    val mySchedule: StateFlow<NormalizedSchedule?> = repository.inputJsonFlow
-        .map { json ->
-            JsonScheduleParser.parse(json, UniversityScheduleRepository.SCHEDULE_ID_INPUT).getOrNull()
-        }
+    val mySchedule: StateFlow<NormalizedSchedule?> = combine(
+        repository.inputJsonFlow,
+        repository.universityScheduleFlow
+    ) { json, catalog ->
+        val parsed = JsonScheduleParser.parse(json, UniversityScheduleRepository.SCHEDULE_ID_INPUT).getOrNull()
+        if (parsed == null) null else enrichMySchedule(parsed, catalog)
+    }
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
@@ -141,6 +163,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             repository.checkAndUpdateSchedule(forceRedownload)
             refreshStorageStats()
             loadComparison()
+        }
+    }
+
+    fun reprocessLocalPdfs() {
+        viewModelScope.launch {
+            repository.reprocessLocalPdfs()
+            refreshStorageStats()
+            loadComparison()
+            ScheduleWidgetProvider.updateAllWidgets(getApplication())
         }
     }
 
