@@ -68,7 +68,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import com.example.AppLinks
+import com.example.domain.calendar.EducationalWeekConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.normalizer.PersianTextNormalizer
+import com.example.ui.components.EducationalWeekEditDialog
 import com.example.ui.theme.AmoledBackground
 import com.example.ui.theme.AmoledOutline
 import com.example.ui.theme.AppMotion
@@ -86,6 +89,8 @@ fun SettingsScreen(
     storageSize: String,
     pdfCount: Int,
     inputJson: String,
+    educationalWeekConfig: EducationalWeekConfig = EducationalWeekConfig(),
+    onSetEducationalWeek: (Int) -> Unit = {},
     onUpdateSourceUrl: (String) -> Unit,
     onResetSourceUrl: () -> Unit,
     onSetThemeMode: (String) -> Unit,
@@ -137,6 +142,7 @@ fun SettingsScreen(
     var tempJson by remember(inputJson) { mutableStateOf(inputJson) }
 
     var showResetConfirmDialog by remember { mutableStateOf(false) }
+    var showEduWeekDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -256,6 +262,67 @@ fun SettingsScreen(
                         Icon(imageVector = Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("پیش‌فرض")
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Educational Week & Calendar Settings
+        SectionTitle(title = "تقویم و هفته آموزشی", icon = Icons.Default.Event)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                val todayJdn = remember { PersianCalendarHelper.getTodayJdn() }
+                val currentWeekNum = remember(educationalWeekConfig, todayJdn) {
+                    educationalWeekConfig.getWeekForDate(todayJdn)
+                }
+                val currentParity = remember(currentWeekNum) {
+                    PersianCalendarHelper.getWeekParityString(currentWeekNum)
+                }
+                val refDateFormatted = remember {
+                    PersianCalendarHelper.formatFullDate(System.currentTimeMillis())
+                }
+
+                Text(
+                    text = "هفته‌های آموزشی دانشگاه از شنبه تا جمعه محاسبه می‌شوند و وضعیت زوج یا فرد بودن بر اساس شماره هفته تعیین می‌شود.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "هفته آموزشی جاری: ${PersianTextNormalizer.toPersianDigits(currentWeekNum.toString())} ($currentParity)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = refDateFormatted,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showEduWeekDialog = true },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("تنظیم هفته")
                     }
                 }
             }
@@ -583,6 +650,20 @@ fun SettingsScreen(
                 TextButton(onClick = { showUrlDialog = false }) {
                     Text("انصراف")
                 }
+            }
+        )
+    }
+
+    // Dialog: Edit Educational Week
+    if (showEduWeekDialog) {
+        val todayJdn = PersianCalendarHelper.getTodayJdn()
+        val currentWeekNum = educationalWeekConfig.getWeekForDate(todayJdn)
+        EducationalWeekEditDialog(
+            currentWeekNumber = currentWeekNum,
+            onDismiss = { showEduWeekDialog = false },
+            onSave = { newNum ->
+                onSetEducationalWeek(newNum)
+                showEduWeekDialog = false
             }
         )
     }

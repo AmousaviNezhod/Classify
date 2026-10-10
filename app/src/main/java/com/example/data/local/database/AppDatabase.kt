@@ -34,7 +34,7 @@ import kotlinx.coroutines.runBlocking
         CourseTaskEntity::class,
         CourseNoteEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -50,6 +50,16 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         private const val TAG = "AppDatabase"
         private const val DB_NAME = "unischedule_database"
+
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE downloaded_pdfs ADD COLUMN weekNumber INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE downloaded_pdfs ADD COLUMN weekParity TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE downloaded_pdfs ADD COLUMN lastExtractedTime INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE schedule_day_availability ADD COLUMN weekNumber INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE schedule_day_availability ADD COLUMN weekParity TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -73,6 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 DB_NAME
             )
+                .addMigrations(MIGRATION_4_5)
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
 

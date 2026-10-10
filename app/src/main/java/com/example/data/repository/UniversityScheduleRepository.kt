@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Log
 import com.example.data.local.PdfStorageManager
 import com.example.data.local.database.AppDatabase
@@ -11,6 +12,8 @@ import com.example.data.local.entities.ScheduleDayAvailabilityEntity
 import com.example.data.local.entities.ScheduleEntity
 import com.example.data.local.entities.toEntity
 import com.example.data.remote.UniversityRemoteDataSource
+import com.example.domain.calendar.EducationalWeekConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.comparator.ScheduleComparator
 import com.example.domain.model.NormalizedSchedule
 import com.example.domain.model.PdfAvailabilityStatus
@@ -63,8 +66,20 @@ class UniversityScheduleRepository(
         const val KEY_INPUT_JSON = "input_schedule_json"
         const val KEY_THEME_MODE = "theme_mode" // SYSTEM, LIGHT, DARK
         const val KEY_AUTO_CHECK = "auto_check_enabled"
+        const val KEY_EDU_WEEK_REF_JDN = "edu_week_ref_jdn"
+        const val KEY_EDU_WEEK_REF_NUM = "edu_week_ref_num"
         const val SCHEDULE_ID_UNIVERSITY = "university_schedule"
         const val SCHEDULE_ID_INPUT = "input_schedule"
+
+        private const val PREFS_FAST_CACHE = "classify_fast_cache"
+        private const val KEY_FAST_INPUT_JSON = "fast_input_json"
+        private const val KEY_FAST_UNI_SCHEDULE_JSON = "fast_uni_schedule_json"
+        private const val KEY_FAST_REF_JDN = "fast_edu_week_ref_jdn"
+        private const val KEY_FAST_REF_NUM = "fast_edu_week_ref_num"
+    }
+
+    private val prefs: SharedPreferences by lazy {
+        context.getSharedPreferences(PREFS_FAST_CACHE, Context.MODE_PRIVATE)
     }
 
     // Lazily created so the heavy Room initialization (schema creation, integrity
@@ -82,6 +97,31 @@ class UniversityScheduleRepository(
     val updateStatus: StateFlow<UpdateStatus> = _updateStatus.asStateFlow()
 
     // ----------------------------------------------------
+    // FAST SYNCHRONOUS CACHE (Zero-latency startup)
+    // ----------------------------------------------------
+
+    fun getFastCachedInputJson(): String =
+        prefs.getString(KEY_FAST_INPUT_JSON, "") ?: ""
+
+    fun getFastCachedMySchedule(): NormalizedSchedule? {
+        val json = getFastCachedInputJson()
+        if (json.isBlank()) return null
+        return JsonScheduleParser.parse(json, SCHEDULE_ID_INPUT).getOrNull()
+    }
+
+    fun getFastCachedUniversitySchedule(): NormalizedSchedule? {
+        val json = prefs.getString(KEY_FAST_UNI_SCHEDULE_JSON, "") ?: ""
+        if (json.isBlank()) return null
+        return JsonScheduleParser.parse(json, SCHEDULE_ID_UNIVERSITY).getOrNull()
+    }
+
+    fun getFastCachedEduWeekConfig(): EducationalWeekConfig {
+        val refJdn = prefs.getLong(KEY_FAST_REF_JDN, PersianCalendarHelper.getTodayJdn())
+        val refNum = prefs.getInt(KEY_FAST_REF_NUM, 1).coerceAtLeast(1)
+        return EducationalWeekConfig(refJdn, refNum)
+    }
+
+    // ----------------------------------------------------
     // SCHEDULE DATA FLOWS
     // ----------------------------------------------------
 
@@ -97,6 +137,17 @@ class UniversityScheduleRepository(
                 val currentAvailability = availability.ifEmpty { defaultDayAvailability() }
                 scheduleEntity.toDomain(classes).copy(dayAvailability = currentAvailability)
             }
+        }.flowOn(Dispatchers.IO)
+    }
+
+    val educationalWeekConfigFlow: Flow<EducationalWeekConfig> by lazy {
+        combine(
+            settingsDao.getSetting(KEY_EDU_WEEK_REF_JDN),
+            settingsDao.getSetting(KEY_EDU_WEEK_REF_NUM)
+        ) { jdnStr, numStr ->
+            val refJdn = jdnStr?.toLongOrNull() ?: prefs.getLong(KEY_FAST_REF_JDN, PersianCalendarHelper.getTodayJdn())
+            val refNum = (numStr?.toIntOrNull() ?: prefs.getInt(KEY_FAST_REF_NUM, 1)).coerceAtLeast(1)
+            EducationalWeekConfig(refJdn, refNum)
         }.flowOn(Dispatchers.IO)
     }
 
@@ -120,7 +171,9 @@ class UniversityScheduleRepository(
         workshopClassCount = workshopClassCount,
         sourceFileName = sourceFileName,
         sourceUrl = sourceUrl,
-        checkedAt = checkedAt
+        checkedAt = checkedAt,
+        weekNumber = weekNumber,
+        weekParity = weekParity
     )
 
     private suspend fun saveAvailability(items: List<ScheduleDayAvailability>) {
@@ -134,7 +187,9 @@ class UniversityScheduleRepository(
                 workshopClassCount = item.workshopClassCount,
                 sourceFileName = item.sourceFileName,
                 sourceUrl = item.sourceUrl,
-                checkedAt = item.checkedAt
+                checkedAt = item.checkedAt,
+                weekNumber = item.weekNumber,
+                weekParity = item.weekParity
             )
         })
     }
@@ -202,6 +257,23 @@ class UniversityScheduleRepository(
 
     suspend fun setInputJson(json: String) = withContext(Dispatchers.IO) {
         settingsDao.setSetting(AppSettingsEntity(KEY_INPUT_JSON, json.trim()))
+        prefs.edit().putString(KEY_FAST_INPUT_JSON, json.trim()).apply()
+    }
+
+    suspend fun setEducationalWeekConfig(refJdn: Long, refWeekNumber: Int) = withContext(Dispatchers.IO) {
+        val safeNum = refWeekNumber.coerceAtLeast(1)
+        settingsDao.setSetting(AppSettingsEntity(KEY_EDU_WEEK_REF_JDN, refJdn.toString()))
+        settingsDao.setSetting(AppSettingsEntity(KEY_EDU_WEEK_REF_NUM, safeNum.toString()))
+        prefs.edit()
+            .putLong(KEY_FAST_REF_JDN, refJdn)
+            .putInt(KEY_FAST_REF_NUM, safeNum)
+            .apply()
+    }
+
+    suspend fun updatePdfWeekNumber(pdfId: String, weekNumber: Int?) = withContext(Dispatchers.IO) {
+        val safeNum = weekNumber?.coerceAtLeast(1)
+        val parity = if (safeNum != null) PersianCalendarHelper.getWeekParityString(safeNum) else ""
+        pdfDao.updatePdfWeek(pdfId, safeNum, parity)
     }
 
     suspend fun setThemeMode(mode: String) = withContext(Dispatchers.IO) {
@@ -512,6 +584,8 @@ class UniversityScheduleRepository(
             var reusedCount = 0
             val processedClasses = mutableListOf<ScheduleClass>()
             val dayResults = mutableMapOf<Int, MutableList<com.example.domain.model.PdfScheduleParseResult>>()
+            val existingClassEntities = scheduleDao.getClassesDirect(SCHEDULE_ID_UNIVERSITY)
+            val existingClasses = existingClassEntities.map { it.toDomain() }
 
             for ((index, discovered) in discoveredPdfs.withIndex()) {
                 val progressFraction = (index + 1).toFloat() / discoveredPdfs.size
@@ -548,7 +622,11 @@ class UniversityScheduleRepository(
                         finalEtag = downloaded.etag
                         finalLastModified = downloaded.lastModified
                         finalHash = storageManager.computeSha256(localFile)
-                        downloadedCount++
+                        if (finalHash == cachedPdfEntity.sha256Hash) {
+                            reusedCount++
+                        } else {
+                            downloadedCount++
+                        }
                     } else if (File(cachedPdfEntity.localFilePath).exists()) {
                         // Network error during re-check: reuse the last known local copy.
                         localFile = File(cachedPdfEntity.localFilePath)
@@ -586,34 +664,71 @@ class UniversityScheduleRepository(
                     }
                 }
 
-                // Parse the PDF
+                // Parse the PDF or reuse cached classes if unchanged
                 if (localFile != null && localFile.exists()) {
-                    _updateStatus.value = UpdateStatus.Progress("در حال خواندن PDF و استخراج کلاس‌ها: ${localFile.name}")
-                    val parseResult = PdfScheduleParser.parsePdfFileDetailed(localFile, SCHEDULE_ID_UNIVERSITY, context)
-                    val extracted = parseResult.classes
-                    Log.d(TAG, "PDF parse ${localFile.name}: normal=${parseResult.normalClasses.size}, workshops=${parseResult.workshopClasses.size}, tables=${parseResult.detectedTableCount}, groups=${parseResult.detectedGroups}")
-                    parseResult.diagnostics.take(3).forEach { Log.d(TAG, "PDF row: $it") }
-
+                    val wasUnchanged = !forceRedownload && cachedPdfEntity != null &&
+                        cachedPdfEntity.parseStatus == "SUCCESS" &&
+                        (finalHash == cachedPdfEntity.sha256Hash || (finalEtag != null && finalEtag == cachedPdfEntity.etag))
                     val discoveredDay = dayIndexFromText(listOf(discovered.linkText, discovered.surroundingContext, discovered.suggestedFileName, discovered.url, localFile.name).joinToString(" "))
                     val fileDay = discoveredDay.takeIf { it in dayNames.indices }
-                        ?: extracted.firstOrNull()?.dayIndex?.takeIf { it in dayNames.indices }
+                        ?: cachedPdfEntity?.dayIndex?.takeIf { it in dayNames.indices }
                         ?: -1
-                    val stateDay = fileDay.takeIf { it in dayNames.indices }
-                        ?: dayIndexFromText(listOf(discovered.linkText, discovered.surroundingContext, discovered.suggestedFileName).joinToString(" "))
-                    if (stateDay in dayNames.indices) {
-                        val resultsForDay = dayResults.getOrPut(stateDay) { mutableListOf() }
-                        resultsForDay.add(parseResult)
-                        dayStates[stateDay] = dayStates[stateDay].copy(
-                            status = if (resultsForDay.any { it.succeeded }) PdfAvailabilityStatus.AVAILABLE else PdfAvailabilityStatus.PARSE_FAILED,
-                            discoveredPdfCount = maxOf(dayStates[stateDay].discoveredPdfCount, 1),
-                            normalClassCount = resultsForDay.sumOf { it.normalClasses.size },
-                            workshopClassCount = resultsForDay.sumOf { it.workshopClasses.size },
+
+                    val existingForDay = if (wasUnchanged && fileDay in dayNames.indices) {
+                        existingClasses.filter { it.dayIndex == fileDay }
+                    } else emptyList()
+
+                    val extracted: List<ScheduleClass>
+                    val detectedWeek: Int?
+                    val detectedParity: String
+                    val parseError: String?
+                    val normalCount: Int
+                    val workshopCount: Int
+
+                    if (existingForDay.isNotEmpty()) {
+                        Log.d(TAG, "Skipping re-parse for unchanged PDF: ${localFile.name}")
+                        extracted = existingForDay
+                        detectedWeek = cachedPdfEntity?.weekNumber ?: PersianCalendarHelper.extractWeekNumber(listOf(discovered.linkText, discovered.suggestedFileName, localFile.name).joinToString(" "))
+                        detectedParity = (cachedPdfEntity?.weekParity ?: "").ifBlank { PersianCalendarHelper.extractParity(listOf(discovered.linkText, discovered.suggestedFileName, localFile.name).joinToString(" ")) }
+                        parseError = null
+                        normalCount = extracted.count { !it.isWorkshop }
+                        workshopCount = extracted.count { it.isWorkshop }
+                    } else {
+                        _updateStatus.value = UpdateStatus.Progress("در حال خواندن PDF و استخراج کلاس‌ها: ${localFile.name}")
+                        val parseResult = PdfScheduleParser.parsePdfFileDetailed(localFile, SCHEDULE_ID_UNIVERSITY, context)
+                        extracted = parseResult.classes
+                        Log.d(TAG, "PDF parse ${localFile.name}: normal=${parseResult.normalClasses.size}, workshops=${parseResult.workshopClasses.size}, tables=${parseResult.detectedTableCount}, groups=${parseResult.detectedGroups}")
+                        parseResult.diagnostics.take(3).forEach { Log.d(TAG, "PDF row: $it") }
+
+                        detectedWeek = parseResult.detectedWeekNumber ?: PersianCalendarHelper.extractWeekNumber(listOf(discovered.linkText, discovered.suggestedFileName, localFile.name).joinToString(" "))
+                        detectedParity = parseResult.detectedWeekParity.ifBlank { PersianCalendarHelper.extractParity(listOf(discovered.linkText, discovered.suggestedFileName, localFile.name).joinToString(" ")) }
+                        parseError = parseResult.diagnostics.firstOrNull().takeIf { extracted.isEmpty() }
+                        normalCount = parseResult.normalClasses.size
+                        workshopCount = parseResult.workshopClasses.size
+
+                        val effectiveDay = if (fileDay in dayNames.indices) fileDay else extracted.firstOrNull()?.dayIndex ?: -1
+                        if (effectiveDay in dayNames.indices) {
+                            val resultsForDay = dayResults.getOrPut(effectiveDay) { mutableListOf() }
+                            resultsForDay.add(parseResult)
+                        }
+                    }
+
+                    val effectiveFileDay = if (fileDay in dayNames.indices) fileDay else extracted.firstOrNull()?.dayIndex ?: -1
+                    if (effectiveFileDay in dayNames.indices) {
+                        dayStates[effectiveFileDay] = dayStates[effectiveFileDay].copy(
+                            status = if (extracted.isNotEmpty()) PdfAvailabilityStatus.AVAILABLE else PdfAvailabilityStatus.PARSE_FAILED,
+                            discoveredPdfCount = maxOf(dayStates[effectiveFileDay].discoveredPdfCount, 1),
+                            normalClassCount = normalCount,
+                            workshopClassCount = workshopCount,
                             sourceFileName = localFile.name,
                             sourceUrl = discovered.url,
-                            checkedAt = System.currentTimeMillis()
+                            checkedAt = System.currentTimeMillis(),
+                            weekNumber = detectedWeek,
+                            weekParity = detectedParity
                         )
                         saveAvailability(dayStates)
                     }
+
                     val pdfEntity = DownloadedPdfEntity(
                         id = cachedPdfEntity?.id ?: UUID.randomUUID().toString(),
                         url = discovered.url,
@@ -624,11 +739,14 @@ class UniversityScheduleRepository(
                         lastModified = finalLastModified,
                         sha256Hash = finalHash,
                         downloadTime = System.currentTimeMillis(),
-                        dayIndex = fileDay,
+                        dayIndex = effectiveFileDay,
                         parseStatus = if (extracted.isNotEmpty()) "SUCCESS" else "FAILED",
-                        parseError = parseResult.diagnostics.firstOrNull().takeIf { extracted.isEmpty() },
-                        extractedClassCount = parseResult.normalClasses.size,
-                        extractedWorkshopCount = parseResult.workshopClasses.size
+                        parseError = parseError,
+                        extractedClassCount = normalCount,
+                        extractedWorkshopCount = workshopCount,
+                        weekNumber = detectedWeek,
+                        weekParity = detectedParity,
+                        lastExtractedTime = System.currentTimeMillis()
                     )
                     pdfDao.insertOrUpdatePdf(pdfEntity)
                     processedClasses.addAll(extracted)
@@ -669,6 +787,8 @@ class UniversityScheduleRepository(
             val classEntities = distinctClasses.map { it.toEntity(SCHEDULE_ID_UNIVERSITY) }
             _updateStatus.value = UpdateStatus.Progress("در حال ذخیره‌سازی فهرست آماده‌شده...")
             scheduleDao.saveScheduleWithClasses(scheduleEntity, classEntities)
+            val domainSchedule = scheduleEntity.toDomain(distinctClasses)
+            prefs.edit().putString(KEY_FAST_UNI_SCHEDULE_JSON, JsonScheduleParser.toUnitSelectionJson(domainSchedule)).apply()
 
             // Recalculate true per-day counts so multi-day workshop PDFs don't lump all workshops into Saturday.
             val recalculatedAvailability = dayStates.map { day ->
@@ -783,6 +903,7 @@ class UniversityScheduleRepository(
             )
 
             scheduleDao.saveScheduleWithClasses(scheduleEntity, combined.map { it.toEntity(SCHEDULE_ID_UNIVERSITY) })
+            prefs.edit().putString(KEY_FAST_UNI_SCHEDULE_JSON, JsonScheduleParser.toUnitSelectionJson(scheduleEntity.toDomain(combined))).apply()
             val currentAvailability = dayAvailabilityFlow.firstOrNull().orEmpty().ifEmpty { defaultDayAvailability() }.toMutableList()
             defaultDayAvailability().forEach { day ->
                 val classesForDay = combined.filter { it.dayIndex == day.dayIndex }
@@ -882,6 +1003,7 @@ class UniversityScheduleRepository(
             )
             _updateStatus.value = UpdateStatus.Progress("در حال ذخیره‌سازی فهرست آماده‌شده...")
             scheduleDao.saveScheduleWithClasses(scheduleEntity, distinctClasses.map { it.toEntity(SCHEDULE_ID_UNIVERSITY) })
+            prefs.edit().putString(KEY_FAST_UNI_SCHEDULE_JSON, JsonScheduleParser.toUnitSelectionJson(scheduleEntity.toDomain(distinctClasses))).apply()
 
             val availability = dayAvailabilityFlow.firstOrNull().orEmpty().ifEmpty { defaultDayAvailability() }
             val existingAvailability = availability.associateBy(ScheduleDayAvailability::dayIndex)

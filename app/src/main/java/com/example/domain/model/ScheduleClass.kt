@@ -1,6 +1,20 @@
 package com.example.domain.model
 
 import androidx.compose.runtime.Immutable
+import com.example.domain.calendar.PersianCalendarHelper
+
+enum class WeekParity {
+    ALL,
+    EVEN,
+    ODD;
+
+    val titleFa: String
+        get() = when (this) {
+            ALL -> "تمام هفته‌ها"
+            EVEN -> "هفته زوج"
+            ODD -> "هفته فرد"
+        }
+}
 
 /**
  * Normalized representation of a single university class session.
@@ -32,4 +46,23 @@ data class ScheduleClass(
         get() = notes.contains("آزمایشگاه") || notes.contains("کارگاه") || notes.contains("سایت") ||
             classroom.contains("کارگاه") || classroom.contains("سایت") || classroom.contains("آزمایشگاه") ||
             courseName.contains("کارگاه") || courseName.contains("آزمایشگاه")
+
+    val weekParity: WeekParity
+        get() = when {
+            parity.contains("زوج") -> WeekParity.EVEN
+            parity.contains("فرد") -> WeekParity.ODD
+            else -> WeekParity.ALL
+        }
+
+    val parityLabel: String
+        get() = weekParity.titleFa
+
+    fun isValidForWeek(weekNumber: Int): Boolean {
+        val isEven = PersianCalendarHelper.isEvenWeek(weekNumber)
+        return when (weekParity) {
+            WeekParity.ALL -> true
+            WeekParity.EVEN -> isEven
+            WeekParity.ODD -> !isEven
+        }
+    }
 }

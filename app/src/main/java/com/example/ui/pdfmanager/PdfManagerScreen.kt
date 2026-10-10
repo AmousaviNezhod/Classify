@@ -22,10 +22,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.AlertDialog
@@ -51,7 +53,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.local.entities.DownloadedPdfEntity
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.normalizer.PersianTextNormalizer
+import com.example.ui.components.EducationalWeekEditDialog
 import com.example.ui.theme.DiffRemoved
 import com.example.ui.theme.DiffUnchanged
 import java.text.SimpleDateFormat
@@ -64,12 +68,14 @@ fun PdfManagerScreen(
     onImportPdf: (Uri) -> Unit,
     onOpenPdf: (DownloadedPdfEntity) -> Unit,
     onDeletePdf: (DownloadedPdfEntity) -> Unit,
+    onUpdatePdfWeekNumber: (DownloadedPdfEntity, Int?) -> Unit = { _, _ -> },
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     BackHandler { onBack() }
 
     var pendingDelete by remember { mutableStateOf<DownloadedPdfEntity?>(null) }
+    var editingPdfWeek by remember { mutableStateOf<DownloadedPdfEntity?>(null) }
 
     val pdfPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -203,11 +209,23 @@ fun PdfManagerScreen(
                         pdf = pdf,
                         onOpen = { onOpenPdf(pdf) },
                         onDelete = { pendingDelete = pdf },
+                        onEditWeek = { editingPdfWeek = pdf },
                         modifier = Modifier.animateItem()
                     )
                 }
             }
         }
+    }
+
+    if (editingPdfWeek != null) {
+        EducationalWeekEditDialog(
+            currentWeekNumber = editingPdfWeek!!.weekNumber ?: 1,
+            onDismiss = { editingPdfWeek = null },
+            onSave = { newNum ->
+                onUpdatePdfWeekNumber(editingPdfWeek!!, newNum)
+                editingPdfWeek = null
+            }
+        )
     }
 }
 
@@ -216,6 +234,7 @@ private fun PdfItemCard(
     pdf: DownloadedPdfEntity,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onEditWeek: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -263,10 +282,9 @@ private fun PdfItemCard(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(2.dp))
-                    val formattedDate = formatDownloadDate(pdf.downloadTime)
                     val sizeFormatted = formatFileSize(pdf.fileSize)
                     Text(
-                        text = "$sizeFormatted  •  $formattedDate",
+                        text = sizeFormatted,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -294,6 +312,43 @@ private fun PdfItemCard(
                             color = DiffUnchanged
                         )
                     }
+                }
+            }
+
+            // Week and Update metadata tag
+            val updateDateFormatted = if (pdf.downloadTime > 0) PersianCalendarHelper.formatShortDate(pdf.downloadTime) else "نامشخص"
+            val weekText = if (pdf.weekNumber != null) {
+                "هفته ${PersianTextNormalizer.toPersianDigits(pdf.weekNumber.toString())}${if (pdf.weekParity.isNotBlank()) " · ${pdf.weekParity}" else ""}"
+            } else {
+                "هفته نامشخص (عمومی)"
+            }
+            val statusTag = "$weekText · به‌روزرسانی $updateDateFormatted"
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                modifier = Modifier
+                    .padding(top = 10.dp)
+                    .clickable(onClick = onEditWeek)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = statusTag,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "ویرایش هفته آموزشی",
+                        tint = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(13.dp)
+                    )
                 }
             }
 

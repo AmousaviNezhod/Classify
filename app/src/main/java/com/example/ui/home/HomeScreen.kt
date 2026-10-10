@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MeetingRoom
+import com.example.domain.calendar.PersianCalendarHelper
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.UploadFile
@@ -470,6 +471,7 @@ private fun CatalogPane(
             .sortedWith(compareBy({ it.first.dayIndex }, { it.first.startTime }, { it.first.courseName }, { it.first.groupCode }))
     }
     var selectedDayFilter by remember { mutableStateOf<Int?>(null) }
+    var selectedParityFilter by remember { mutableStateOf<String?>(null) }
     var settledSearchQuery by remember { mutableStateOf(searchQuery) }
 
     LaunchedEffect(searchQuery) {
@@ -531,22 +533,56 @@ private fun CatalogPane(
                 .testTag("search_classes_input")
         )
 
-        // Day Selector Chip Filter
+        // Day & Parity Filter Rows
         DaySelector(
             selectedDayIndex = selectedDayFilter,
             onSelectDay = { selectedDayFilter = it }
         )
 
-        // Filter Offerings
-        val offerings = remember(searchableCatalog, settledSearchQuery, selectedDayFilter) {
-            val query = PersianTextNormalizer.toAsciiDigits(PersianTextNormalizer.normalizeText(settledSearchQuery)).lowercase(Locale.ROOT)
-            searchableCatalog.asSequence()
-                .filter { (course, _, searchableText) ->
-                    val matchesQuery = query.isBlank() || searchableText.contains(query)
-                    val matchesDay = selectedDayFilter == null || course.dayIndex == selectedDayFilter
-                    matchesQuery && matchesDay
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            val parityOptions = listOf<Pair<String?, String>>(
+                null to "همهٔ هفته‌ها",
+                "زوج" to "فقط هفته زوج",
+                "فرد" to "فقط هفته فرد"
+            )
+            parityOptions.forEach { (key, label) ->
+                val isSelected = selectedParityFilter == key
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+                    modifier = Modifier.clickable { selectedParityFilter = key }
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                 }
-                .toList()
+            }
+        }
+
+        // Filter Offerings
+        val offerings = remember(searchableCatalog, settledSearchQuery, selectedDayFilter, selectedParityFilter) {
+            val query = PersianTextNormalizer.toAsciiDigits(PersianTextNormalizer.normalizeText(settledSearchQuery)).lowercase(Locale.ROOT)
+            searchableCatalog.filter { (course, _, searchableText) ->
+                val matchesQuery = query.isBlank() || searchableText.contains(query)
+                val matchesDay = selectedDayFilter == null || course.dayIndex == selectedDayFilter
+                val matchesParity = when (selectedParityFilter) {
+                    "زوج" -> course.parity.contains("زوج") || course.parity.isBlank()
+                    "فرد" -> course.parity.contains("فرد") || course.parity.isBlank()
+                    else -> true
+                }
+                matchesQuery && matchesDay && matchesParity
+            }
         }
 
         Text(
@@ -563,15 +599,13 @@ private fun CatalogPane(
         ) {
             items(offerings, key = { it.second }) { (course, offeringKey, _) ->
                 val selected = offeringKey in selectedOfferingKeys
-                Box(Modifier.animateItem()) {
-                    OfferingCard(
-                        course = course,
-                        actionLabel = if (selected) "افزوده شد" else "افزودن",
-                        onAction = { if (!selected) onAdd(course) },
-                        isSelected = selected,
-                        onClick = { onOpenCourseDetail(course) }
-                    )
-                }
+                OfferingCard(
+                    course = course,
+                    actionLabel = if (selected) "افزوده شد" else "افزودن",
+                    onAction = { if (!selected) onAdd(course) },
+                    isSelected = selected,
+                    onClick = { onOpenCourseDetail(course) }
+                )
             }
             if (offerings.isEmpty()) {
                 item {
@@ -727,7 +761,7 @@ fun DayPdfStatusCard(items: List<ScheduleDayAvailability>, modifier: Modifier = 
                             PdfAvailabilityStatus.NOT_FOUND -> "○ هنوز بارگذاری نشده"
                             PdfAvailabilityStatus.DOWNLOAD_FAILED -> "⚠ دانلود فایل ناموفق بود"
                             PdfAvailabilityStatus.PARSE_FAILED -> "⚠ جدول برنامه خوانده نشد"
-                            PdfAvailabilityStatus.CHECK_FAILED -> "؟ بررسی سایت انجام نشد"
+                            PdfAvailabilityStatus.CHECK_FAILED -> "؟ نیاز به همگام‌سازی"
                             PdfAvailabilityStatus.UNKNOWN -> if (day.discoveredPdfCount > 0) "… در انتظار دانلود یا استخراج" else "— هنوز بررسی نشده"
                         }
                         val color = when (day.status) {
@@ -735,14 +769,22 @@ fun DayPdfStatusCard(items: List<ScheduleDayAvailability>, modifier: Modifier = 
                             PdfAvailabilityStatus.PARSE_FAILED, PdfAvailabilityStatus.DOWNLOAD_FAILED, PdfAvailabilityStatus.CHECK_FAILED -> MaterialTheme.colorScheme.error
                             else -> MaterialTheme.colorScheme.onSurfaceVariant
                         }
+                        val weekTag = if (day.weekNumber != null) "هفته ${PersianTextNormalizer.toPersianDigits(day.weekNumber.toString())}" else ""
+                        val dateTag = if (day.checkedAt > 0) "به‌روزرسانی ${PersianCalendarHelper.formatShortDate(day.checkedAt)}" else ""
+                        val metaTag = listOf(weekTag, dateTag).filter(String::isNotBlank).joinToString(" · ")
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 2.dp),
+                                .padding(vertical = 3.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(day.dayName, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                            Column {
+                                Text(day.dayName, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+                                if (metaTag.isNotBlank()) {
+                                    Text(metaTag, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                                }
+                            }
                             Text(label, style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End)
                         }
                     }
@@ -875,8 +917,30 @@ private fun OfferingCard(
                             Text(course.teacher, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         }
                     }
-                    if (course.parity.isNotBlank()) {
-                        Text(course.parity, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                    val parityText = when {
+                        course.parity.contains("زوج") -> "هفته زوج"
+                        course.parity.contains("فرد") -> "هفته فرد"
+                        else -> "تمام هفته‌ها"
+                    }
+                    val isEven = course.parity.contains("زوج")
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = when {
+                            isEven -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            course.parity.contains("فرد") -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
+                    ) {
+                        Text(
+                            text = parityText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when {
+                                isEven -> MaterialTheme.colorScheme.primary
+                                course.parity.contains("فرد") -> MaterialTheme.colorScheme.secondary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
                     }
                 }
             }

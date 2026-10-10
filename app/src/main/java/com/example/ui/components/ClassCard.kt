@@ -110,16 +110,21 @@ fun ClassCard(
                         if (scheduleClass.units > 0) {
                             MetaChip("${PersianTextNormalizer.toPersianDigits(scheduleClass.units.toString())} واحد")
                         }
-                        if (scheduleClass.parity.isNotBlank()) {
-                            val isEven = scheduleClass.parity.contains("زوج")
-                            // Parity is carried by weight (filled vs outlined), not by a
-                            // second accent hue. The label spells it out either way.
-                            ParityChip(
-                                text = if (isEven) "هفته زوج" else "هفته فرد",
-                                color = if (isEven) ParityEvenColor else ParityOddColor,
-                                filled = isEven
-                            )
+                        val parityText = when {
+                            scheduleClass.parity.contains("زوج") -> "هفته زوج"
+                            scheduleClass.parity.contains("فرد") -> "هفته فرد"
+                            else -> "تمام هفته‌ها"
                         }
+                        val isEven = scheduleClass.parity.contains("زوج")
+                        ParityChip(
+                            text = parityText,
+                            color = when {
+                                isEven -> ParityEvenColor
+                                scheduleClass.parity.contains("فرد") -> ParityOddColor
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            filled = isEven
+                        )
                     }
 
                     if (scheduleClass.groupCode.isNotBlank()) {

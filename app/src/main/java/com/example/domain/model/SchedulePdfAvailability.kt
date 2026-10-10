@@ -21,7 +21,9 @@ data class ScheduleDayAvailability(
     val workshopClassCount: Int = 0,
     val sourceFileName: String = "",
     val sourceUrl: String = "",
-    val checkedAt: Long = 0L
+    val checkedAt: Long = 0L,
+    val weekNumber: Int? = null,
+    val weekParity: String = ""
 )
 
 @Immutable
@@ -30,7 +32,9 @@ data class PdfScheduleParseResult(
     val workshopClasses: List<ScheduleClass> = emptyList(),
     val detectedTableCount: Int = 0,
     val detectedGroups: Set<String> = emptySet(),
-    val diagnostics: List<String> = emptyList()
+    val diagnostics: List<String> = emptyList(),
+    val detectedWeekNumber: Int? = null,
+    val detectedWeekParity: String = ""
 ) {
     val classes: List<ScheduleClass> get() = normalClasses + workshopClasses
     val succeeded: Boolean get() = classes.isNotEmpty()

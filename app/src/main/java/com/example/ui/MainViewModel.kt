@@ -19,6 +19,8 @@ import com.example.domain.model.ScheduleComparisonSummary
 import com.example.domain.model.CourseEvent
 import com.example.domain.model.CourseTask
 import com.example.domain.model.CourseNote
+import com.example.domain.calendar.EducationalWeekConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.manager.BackupAndImportManager
 import com.example.domain.manager.FullBackupData
 import com.example.widget.ScheduleWidgetProvider
@@ -58,11 +60,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = UniversityScheduleRepository(application.applicationContext)
 
+    val educationalWeekConfig: StateFlow<EducationalWeekConfig> = repository.educationalWeekConfigFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = repository.getFastCachedEduWeekConfig()
+        )
+
     val schedule: StateFlow<NormalizedSchedule?> = repository.universityScheduleFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = null
+            initialValue = repository.getFastCachedUniversitySchedule()
         )
 
     val mySchedule: StateFlow<NormalizedSchedule?> = combine(
@@ -75,8 +84,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = null
+            initialValue = repository.getFastCachedMySchedule()
         )
+
+    val inputJson: StateFlow<String> = repository.inputJsonFlow
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = repository.getFastCachedInputJson()
+        )
+
+    fun setEducationalWeek(weekNumber: Int, forJdn: Long = PersianCalendarHelper.getTodayJdn()) {
+        viewModelScope.launch {
+            repository.setEducationalWeekConfig(forJdn, weekNumber)
+        }
+    }
+
+    fun updatePdfWeekNumber(pdfId: String, weekNumber: Int?) {
+        viewModelScope.launch {
+            repository.updatePdfWeekNumber(pdfId, weekNumber)
+        }
+    }
 
     private val _selectedScheduleTab = MutableStateFlow(0) // 0 = My Schedule, 1 = University Master
     val selectedScheduleTab: StateFlow<Int> = _selectedScheduleTab.asStateFlow()
@@ -102,13 +130,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     val sourceUrl: StateFlow<String> = repository.sourceUrlFlow
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = ""
-        )
-
-    val inputJson: StateFlow<String> = repository.inputJsonFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),

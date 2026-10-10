@@ -3,6 +3,7 @@ package com.example.domain.parser
 import android.content.Context
 import android.util.Log
 import com.example.BuildConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.model.PdfScheduleParseResult
 import com.example.domain.model.ScheduleClass
 import com.example.domain.model.ScheduleOfferingIdentity
@@ -264,7 +265,9 @@ object PdfScheduleParser {
         val tableCount = if (positionedText.isNotBlank()) titles else {
             maxOf(titles, normalizedNormal.map { it.dayIndex to it.parity }.distinct().size)
         }
-        return PdfScheduleParseResult(normalizedNormal, normalizedWorkshops, tableCount, groups, diagnostics)
+        val detectedWeek = PersianCalendarHelper.extractWeekNumber(positionedText)
+        val detectedParity = PersianCalendarHelper.extractParity(positionedText)
+        return PdfScheduleParseResult(normalizedNormal, normalizedWorkshops, tableCount, groups, diagnostics, detectedWeek, detectedParity)
     }
 
     private fun normalizeAndValidate(classes: List<ScheduleClass>): List<ScheduleClass> = classes.map { course ->
@@ -353,7 +356,8 @@ object PdfScheduleParser {
         val courseName: String,
         val courseCode: String,
         val groupCode: String,
-        val teacher: String
+        val teacher: String,
+        val parity: String = ""
     )
 
     private fun parseAdditionalGroups(lines: List<String>): List<String> = lines.flatMap { line ->
@@ -369,10 +373,25 @@ object PdfScheduleParser {
         val codePattern = Regex("(?:کد(?: درس)?|code)\\s*[:：-]?\\s*([0-9۰-۹]+)", RegexOption.IGNORE_CASE)
         var group = ""
         var code = ""
+        var cellParity = ""
         val nameParts = mutableListOf<String>()
         val teacherParts = mutableListOf<String>()
         lines.forEachIndexed { index, rawLine ->
             var line = PersianTextNormalizer.normalizeCourseName(rawLine)
+            val parityMatch = when {
+                line.contains("هفته زوج") || line.contains("(زوج)") || line.trim() == "زوج" -> "زوج"
+                line.contains("هفته فرد") || line.contains("(فرد)") || line.trim() == "فرد" -> "فرد"
+                else -> ""
+            }
+            if (parityMatch.isNotBlank()) {
+                if (cellParity.isBlank()) cellParity = parityMatch
+                line = line.replace("هفته زوج", " ")
+                    .replace("(زوج)", " ")
+                    .replace("هفته فرد", " ")
+                    .replace("(فرد)", " ")
+                    .replace(Regex("(?:^|\\s)(?:زوج|فرد)(?=$|\\s)"), " ")
+                    .trim()
+            }
             val codeMatch = codePattern.find(line)
             if (codeMatch != null) {
                 code = PersianTextNormalizer.toAsciiDigits(codeMatch.groupValues[1])
@@ -402,9 +421,13 @@ object PdfScheduleParser {
         }
         val name = PersianTextNormalizer.normalizeCourseName(nameParts.joinToString(" ") { it.replace(Regex("[-–:،]+$"), "").trim() })
             .replace(Regex("^(?:درس|نام درس|عنوان درس)[:：\\s-]*"), "")
+            .replace(Regex("\\s*\\((?:زوج|فرد)\\)"), "")
+            .replace(Regex("\\s*هفته\\s*(?:زوج|فرد)"), "")
+            .replace(Regex("(?:^|\\s)(?:زوج|فرد)(?=$|\\s)"), " ")
+            .trim()
         if (!isValidCourseName(name)) return null
         val teacher = PersianTextNormalizer.normalizeText(teacherParts.filter(String::isNotBlank).joinToString(" "))
-        return ParsedCourseCell(name, code, group, teacher)
+        return ParsedCourseCell(name, code, group, teacher, cellParity)
     }
 
     private fun parsePositionedNormalTables(text: String, scheduleId: String, sourceTag: String): List<ScheduleClass> {
@@ -523,6 +546,11 @@ object PdfScheduleParser {
                             parsed.groupCode.isNotBlank() -> listOf(parsed.groupCode)
                             else -> listOf("")
                         }
+                        val effectiveParity = when {
+                            parsed.parity.isNotBlank() -> parsed.parity
+                            parity.isNotBlank() -> parity
+                            else -> ""
+                        }
                         groups.forEach { group ->
                             results += ScheduleClass(
                                 id = "${scheduleId}_grid_${UUID.randomUUID().toString().take(8)}",
@@ -536,7 +564,7 @@ object PdfScheduleParser {
                                 endTime = slot.end,
                                 classroom = classroom,
                                 groupCode = group,
-                                parity = parity,
+                                parity = effectiveParity,
                                 notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "جدول برنامه کلاسی"
                             )
                         }
@@ -657,10 +685,18 @@ object PdfScheduleParser {
                     if (name.isBlank() || isTrailingRoomLabel) return@courseLoop
                     val time = slotFor(course.centerX)
                     val teacher = teachers.minByOrNull { kotlin.math.abs(it.centerX - course.centerX) }?.text.orEmpty()
-                    val parity = when { name.contains("زوج") -> "زوج"; name.contains("فرد") -> "فرد"; else -> "" }
+                    val parity = when {
+                        name.contains("زوج") || teacher.contains("زوج") -> "زوج"
+                        name.contains("فرد") || teacher.contains("فرد") -> "فرد"
+                        else -> ""
+                    }
+                    val cleanName = name.replace(Regex("\\s*\\((?:زوج|فرد)\\)"), "")
+                        .replace(Regex("\\s*هفته\\s*(?:زوج|فرد)"), "")
+                        .replace(Regex("(?:^|\\s)(?:زوج|فرد)(?=$|\\s)"), " ")
+                        .replace(Regex("\\s{2,}"), " ").trim()
                     results += ScheduleClass(
                         id = "${scheduleId}_position_${UUID.randomUUID().toString().take(8)}", scheduleId = scheduleId,
-                        courseName = name.replace(Regex("\\s*\\((?:زوج|فرد)\\)"), "").trim(), teacher = teacher,
+                        courseName = cleanName, teacher = teacher,
                         dayOfWeek = dayForPage.first, dayIndex = dayForPage.second,
                         startTime = time.first, endTime = time.second, classroom = classroom,
                         groupCode = "", parity = parity,
@@ -734,12 +770,17 @@ object PdfScheduleParser {
                 val range = Regex("(?:گ|گروه)\\s*[0-9۰-۹/-]+\\s*[-–]\\s*(?:گ|گروه)\\s*([0-9۰-۹]+)").find(raw)
                 val groups = (listOf(group) + range?.groupValues?.get(1)?.let(PersianTextNormalizer::toAsciiDigits).orEmpty())
                     .filter(String::isNotBlank).distinct()
+                val chunkParity = when {
+                    raw.contains("فرد") || course.contains("فرد") -> "فرد"
+                    raw.contains("زوج") || course.contains("زوج") -> "زوج"
+                    else -> parity
+                }
                 groups.forEach { selectedGroup ->
                     results += ScheduleClass(
                         id = "${scheduleId}_matrix_${UUID.randomUUID().toString().take(8)}", scheduleId = scheduleId,
                         courseName = PersianTextNormalizer.cleanCourseName(course), teacher = PersianTextNormalizer.normalizeText(teacher),
                         dayOfWeek = day.first, dayIndex = day.second, startTime = slot.first, endTime = slot.second,
-                        classroom = classroom, groupCode = selectedGroup.ifEmpty { "1" }, parity = parity,
+                        classroom = classroom, groupCode = selectedGroup.ifEmpty { "1" }, parity = chunkParity,
                         notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "")
                 }
             }
@@ -828,9 +869,15 @@ object PdfScheduleParser {
                 i + 1 < lines.size && isLikelyCourseName(lines[i + 1]) -> PersianTextNormalizer.cleanCourseName(lines[i + 1])
                 else -> ""
             }
+            val lineParity = when {
+                clean.contains("زوج") -> "زوج"
+                clean.contains("فرد") -> "فرد"
+                else -> ""
+            }
             if (course.isNotBlank() && course != "نامشخص") result += ScheduleClass(id = "${scheduleId}_${UUID.randomUUID().toString().take(8)}", scheduleId = scheduleId,
                 courseName = course, teacher = PersianTextNormalizer.normalizeText(teacher), dayOfWeek = inlineDay.first, dayIndex = inlineDay.second,
                 startTime = start, endTime = end, classroom = room, groupCode = group,
+                parity = lineParity,
                 notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "")
         }
         return result

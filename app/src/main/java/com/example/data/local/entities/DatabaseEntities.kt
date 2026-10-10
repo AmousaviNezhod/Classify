@@ -84,7 +84,10 @@ data class DownloadedPdfEntity(
     val parseStatus: String = "SUCCESS", // SUCCESS, FAILED, PENDING, EMPTY
     val parseError: String? = null,
     val extractedClassCount: Int = 0,
-    val extractedWorkshopCount: Int = 0
+    val extractedWorkshopCount: Int = 0,
+    val weekNumber: Int? = null,
+    val weekParity: String = "",
+    val lastExtractedTime: Long = 0L
 )
 
 @Entity(tableName = "schedule_day_availability")
@@ -97,7 +100,9 @@ data class ScheduleDayAvailabilityEntity(
     val workshopClassCount: Int = 0,
     val sourceFileName: String = "",
     val sourceUrl: String = "",
-    val checkedAt: Long = 0L
+    val checkedAt: Long = 0L,
+    val weekNumber: Int? = null,
+    val weekParity: String = ""
 )
 
 @Entity(tableName = "app_settings")

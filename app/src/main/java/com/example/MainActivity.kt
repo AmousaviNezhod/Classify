@@ -179,6 +179,7 @@ fun ScheduleApp(viewModel: MainViewModel) {
     val comparisonSummary by viewModel.comparisonSummary.collectAsStateWithLifecycle()
     val downloadedPdfs by viewModel.downloadedPdfs.collectAsStateWithLifecycle()
     val dayAvailability by viewModel.dayAvailability.collectAsStateWithLifecycle()
+    val educationalWeekConfig by viewModel.educationalWeekConfig.collectAsStateWithLifecycle()
     val sourceUrl by viewModel.sourceUrl.collectAsStateWithLifecycle()
     val inputJson by viewModel.inputJson.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -355,8 +356,10 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                         universitySchedule = universitySchedule,
                                         events = allEvents,
                                         tasks = allTasks,
+                                        educationalWeekConfig = educationalWeekConfig,
                                         isUpdating = isUpdating,
                                         onFetchSchedule = { viewModel.triggerUpdate(forceRedownload = false) },
+                                        onSetEducationalWeek = viewModel::setEducationalWeek,
                                         onNavigateToCourses = { targetTab ->
                                             coursesTab = targetTab
                                             currentScreen = Screen.COURSES
@@ -385,6 +388,7 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                     Screen.CALENDAR -> CalendarScreen(
                                         myClasses = mySchedule?.classes.orEmpty(),
                                         events = allEvents,
+                                        educationalWeekConfig = educationalWeekConfig,
                                         onOpenCourseDetail = openCourseDetail,
                                         onToggleEventCompleted = viewModel::toggleEventCompleted,
                                         onDeleteEvent = viewModel::deleteEvent
@@ -405,6 +409,8 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                         storageSize = storageSize,
                                         pdfCount = pdfCount,
                                         inputJson = inputJson,
+                                        educationalWeekConfig = educationalWeekConfig,
+                                        onSetEducationalWeek = viewModel::setEducationalWeek,
                                         onUpdateSourceUrl = viewModel::updateSourceUrl,
                                         onResetSourceUrl = viewModel::resetSourceUrl,
                                         onSetThemeMode = viewModel::setTheme,
@@ -542,6 +548,9 @@ fun ScheduleApp(viewModel: MainViewModel) {
                                                 onImportPdf = viewModel::importPdf,
                                                 onOpenPdf = viewModel::openPdf,
                                                 onDeletePdf = viewModel::deletePdf,
+                                                onUpdatePdfWeekNumber = { pdf, weekNum ->
+                                                    viewModel.updatePdfWeekNumber(pdf.id, weekNum)
+                                                },
                                                 onBack = { currentScreen = previousScreen }
                                             )
 

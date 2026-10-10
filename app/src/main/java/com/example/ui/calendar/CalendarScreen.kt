@@ -42,6 +42,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.domain.calendar.EducationalWeekConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.model.CourseEvent
 import com.example.domain.model.CourseEventType
 import com.example.domain.model.ScheduleClass
@@ -54,6 +56,7 @@ import com.example.ui.util.DateTimeUtils
 fun CalendarScreen(
     myClasses: List<ScheduleClass>,
     events: List<CourseEvent>,
+    educationalWeekConfig: EducationalWeekConfig = EducationalWeekConfig(),
     onOpenCourseDetail: (ScheduleClass) -> Unit,
     onToggleEventCompleted: (CourseEvent) -> Unit,
     onDeleteEvent: (String) -> Unit,
@@ -61,6 +64,15 @@ fun CalendarScreen(
 ) {
     val todayIndex = remember { DateTimeUtils.getTodayDayIndex() }
     var selectedDayIndex by remember { mutableIntStateOf(todayIndex) }
+
+    val currentWeekNumber = remember(educationalWeekConfig) {
+        educationalWeekConfig.getWeekForDate(PersianCalendarHelper.getTodayJdn())
+    }
+    val currentParity = remember(currentWeekNumber) {
+        PersianCalendarHelper.getWeekParityString(currentWeekNumber)
+    }
+
+    var selectedFilterIndex by remember { mutableIntStateOf(0) } // 0: هفته جاری, 1: همه, 2: زوج, 3: فرد
 
     val dayNames = listOf(
         0 to "شنبه",
@@ -75,7 +87,18 @@ fun CalendarScreen(
     val classesByDay = remember(myClasses) {
         myClasses.groupBy { it.dayIndex }.mapValues { (_, classes) -> classes.sortedBy { it.startTime } }
     }
-    val classesForSelectedDay = classesByDay[selectedDayIndex].orEmpty()
+    val rawClassesForSelectedDay = classesByDay[selectedDayIndex].orEmpty()
+
+    val classesForSelectedDay = remember(rawClassesForSelectedDay, selectedFilterIndex, currentWeekNumber) {
+        when (selectedFilterIndex) {
+            0 -> rawClassesForSelectedDay.filter { it.isValidForWeek(currentWeekNumber) }
+            1 -> rawClassesForSelectedDay
+            2 -> rawClassesForSelectedDay.filter { it.parity.contains("زوج") || it.parity.isBlank() }
+            3 -> rawClassesForSelectedDay.filter { it.parity.contains("فرد") || it.parity.isBlank() }
+            else -> rawClassesForSelectedDay
+        }
+    }
+
     val courseKeysByDay = remember(classesByDay) {
         classesByDay.mapValues { (_, classes) -> classes.mapTo(HashSet()) { it.semanticKey } }
     }
@@ -212,15 +235,52 @@ fun CalendarScreen(
             }
         }
 
-        // 3. Section Title for Classes
+        // 3. Section Title & Parity Filter Row for Classes
         item {
             val selectedDayName = dayNames.firstOrNull { it.first == selectedDayIndex }?.second ?: ""
-            Text(
-                "کلاس‌های $selectedDayName (${PersianTextNormalizer.toPersianDigits(classesForSelectedDay.size.toString())})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 6.dp)
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "کلاس‌های $selectedDayName (${PersianTextNormalizer.toPersianDigits(classesForSelectedDay.size.toString())})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Compact parity filter chips
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val filterOptions = listOf(
+                        "هفته جاری ($currentWeekNumber · $currentParity)",
+                        "تمام هفته‌ها",
+                        "فقط هفته زوج",
+                        "فقط هفته فرد"
+                    )
+                    items(filterOptions.size) { idx ->
+                        val selected = selectedFilterIndex == idx
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                            modifier = Modifier.clickable { selectedFilterIndex = idx }
+                        ) {
+                            Text(
+                                text = filterOptions[idx],
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         if (classesForSelectedDay.isEmpty()) {
@@ -271,11 +331,42 @@ fun CalendarScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(
-                                text = session.courseName,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = session.courseName,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                val isEven = session.parity.contains("زوج")
+                                val parityLabel = when {
+                                    isEven -> "هفته زوج"
+                                    session.parity.contains("فرد") -> "هفته فرد"
+                                    else -> "تمام هفته‌ها"
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = when {
+                                        isEven -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        session.parity.contains("فرد") -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                ) {
+                                    Text(
+                                        text = parityLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = when {
+                                            isEven -> MaterialTheme.colorScheme.primary
+                                            session.parity.contains("فرد") -> MaterialTheme.colorScheme.secondary
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                             Spacer(Modifier.height(4.dp))
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),

@@ -76,6 +76,9 @@ interface DownloadedPdfDao {
 
     @Query("SELECT COUNT(*) FROM downloaded_pdfs")
     fun getPdfCount(): Flow<Int>
+
+    @Query("UPDATE downloaded_pdfs SET weekNumber = :weekNumber, weekParity = :weekParity WHERE id = :id")
+    suspend fun updatePdfWeek(id: String, weekNumber: Int?, weekParity: String)
 }
 
 @Dao
