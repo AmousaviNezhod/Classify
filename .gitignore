@@ -33,5 +33,7 @@ my-upload-key.jks
 .zcode/
 skills/
 skills-lock.json
+__pycache__/
+*.pyc
 
 

@@ -46,8 +46,18 @@ object ScheduleOfferingIdentity {
                 return@mapNotNull null
             }
 
+            val offeringExplicitTheory = offering.notes.contains("نظری") || offering.notes.contains("تئوری")
+            val candidateExplicitTheory = candidate.notes.contains("نظری") || candidate.notes.contains("تئوری")
+            val offeringExplicitPractical = offering.notes.contains("عملی") || offering.notes.contains("کارگاه") || offering.notes.contains("آزمایشگاه") || offering.durationMinutes >= 180
+            val candidateExplicitPractical = candidate.notes.contains("عملی") || candidate.notes.contains("کارگاه") || candidate.notes.contains("آزمایشگاه") || candidate.durationMinutes >= 180
+
+            // Theoretical sessions must never match practical sessions or borrow workshop rooms
+            if (offeringExplicitTheory && candidateExplicitPractical) return@mapNotNull null
+            if (offeringExplicitPractical && candidateExplicitTheory) return@mapNotNull null
+
             var score = if (sameCode) 100 else nameScore
             if (exactTime) score += 40 else if (timeOverlap) score += 25
+            if (offering.isPractical == candidate.isPractical) score += 30
 
             val candidateTeacher = PersianTextNormalizer.cleanTeacherName(candidate.teacher)
             val sameTeacher = offeringTeacher.isNotBlank() && candidateTeacher.isNotBlank() &&
@@ -142,10 +152,14 @@ object ScheduleOfferingIdentity {
     /** Fill details omitted by an imported schedule without replacing user-provided values. */
     fun enrichFromCatalog(offering: ScheduleClass, catalog: List<ScheduleClass>): ScheduleClass {
         val match = findCatalogMatch(offering, catalog) ?: return offering
+        val matchRoomIsWorkshop = match.classroom.contains("کارگاه") || match.classroom.contains("آزمایشگاه")
+        val offeringExplicitTheory = offering.notes.contains("نظری") || offering.notes.contains("تئوری")
+        val roomToAssign = if (offeringExplicitTheory && matchRoomIsWorkshop) offering.classroom else match.classroom
+
         return offering.copy(
             courseCode = if (isPlaceholder(offering.courseCode)) match.courseCode else offering.courseCode,
             teacher = if (isPlaceholder(offering.teacher)) match.teacher else offering.teacher,
-            classroom = if (isPlaceholder(offering.classroom)) match.classroom else offering.classroom,
+            classroom = if (isPlaceholder(offering.classroom)) roomToAssign else offering.classroom,
             parity = if (isPlaceholder(offering.parity)) match.parity else offering.parity,
             units = offering.units.takeIf { it > 0 } ?: match.units
         )

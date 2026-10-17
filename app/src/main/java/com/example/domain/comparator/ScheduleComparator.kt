@@ -176,9 +176,19 @@ object ScheduleComparator {
                 return@mapNotNull null
             }
 
+            val targetIsPractical = target.isPractical
+            val candIsPractical = cand.isPractical
+            val targetIsTheoretical = target.isTheoretical
+            val candIsTheoretical = cand.isTheoretical
+
+            // Theoretical sessions must never claim practical session offerings and vice versa
+            if (targetIsTheoretical && candIsPractical) return@mapNotNull null
+            if (targetIsPractical && candIsTheoretical) return@mapNotNull null
+
             var score = 0
             if (sameCode) score += 100
             score += if (targetNorm == candNorm) 80 else 60
+            if (targetIsPractical == candIsPractical) score += 25
 
             // Day match is critical
             if (sameDay) score += 50

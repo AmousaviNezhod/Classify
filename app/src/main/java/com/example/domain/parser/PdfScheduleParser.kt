@@ -357,7 +357,8 @@ object PdfScheduleParser {
         val courseCode: String,
         val groupCode: String,
         val teacher: String,
-        val parity: String = ""
+        val parity: String = "",
+        val sessionType: String = ""
     )
 
     private fun parseAdditionalGroups(lines: List<String>): List<String> = lines.flatMap { line ->
@@ -374,10 +375,27 @@ object PdfScheduleParser {
         var group = ""
         var code = ""
         var cellParity = ""
+        var cellSessionType = ""
         val nameParts = mutableListOf<String>()
         val teacherParts = mutableListOf<String>()
         lines.forEachIndexed { index, rawLine ->
             var line = PersianTextNormalizer.normalizeCourseName(rawLine)
+            val sessionTypeMatch = when {
+                line.contains("آزمایشگاه") || line.contains("ازمایشگاه") -> "آزمایشگاه"
+                line.contains("کارگاه") -> "کارگاه"
+                line.contains("سایت") -> "سایت"
+                line.contains("عملی") -> "عملی"
+                line.contains("نظری") || line.contains("تئوری") -> "نظری"
+                line.contains("پروژه") -> "پروژه"
+                else -> ""
+            }
+            if (sessionTypeMatch.isNotBlank()) {
+                if (cellSessionType.isBlank()) cellSessionType = sessionTypeMatch
+                line = line
+                    .replace(Regex("\\s*\\((?:نظری|تئوری|عملی|آزمایشگاه|ازمایشگاه|کارگاه|سایت|پروژه)\\)"), " ")
+                    .replace(Regex("(?:^|\\s)(?:نظری|تئوری|عملی|آزمایشگاه|ازمایشگاه|کارگاه|سایت|پروژه)(?=$|\\s)"), " ")
+                    .trim()
+            }
             val parityMatch = when {
                 line.contains("هفته زوج") || line.contains("(زوج)") || line.trim() == "زوج" -> "زوج"
                 line.contains("هفته فرد") || line.contains("(فرد)") || line.trim() == "فرد" -> "فرد"
@@ -421,13 +439,13 @@ object PdfScheduleParser {
         }
         val name = PersianTextNormalizer.normalizeCourseName(nameParts.joinToString(" ") { it.replace(Regex("[-–:،]+$"), "").trim() })
             .replace(Regex("^(?:درس|نام درس|عنوان درس)[:：\\s-]*"), "")
-            .replace(Regex("\\s*\\((?:زوج|فرد)\\)"), "")
+            .replace(Regex("\\s*\\((?:زوج|فرد|نظری|تئوری|عملی|آزمایشگاه|ازمایشگاه|کارگاه|سایت|پروژه)\\)"), "")
             .replace(Regex("\\s*هفته\\s*(?:زوج|فرد)"), "")
-            .replace(Regex("(?:^|\\s)(?:زوج|فرد)(?=$|\\s)"), " ")
+            .replace(Regex("(?:^|\\s)(?:زوج|فرد|نظری|تئوری|عملی|آزمایشگاه|ازمایشگاه|کارگاه|سایت|پروژه)(?=$|\\s)"), " ")
             .trim()
         if (!isValidCourseName(name)) return null
         val teacher = PersianTextNormalizer.normalizeText(teacherParts.filter(String::isNotBlank).joinToString(" "))
-        return ParsedCourseCell(name, code, group, teacher, cellParity)
+        return ParsedCourseCell(name, code, group, teacher, cellParity, cellSessionType)
     }
 
     private fun parsePositionedNormalTables(text: String, scheduleId: String, sourceTag: String): List<ScheduleClass> {
@@ -551,6 +569,19 @@ object PdfScheduleParser {
                             parity.isNotBlank() -> parity
                             else -> ""
                         }
+                        val slotH = calculateHours(slot.start, slot.end)
+                        val effectiveSessionType = when {
+                            parsed.sessionType.isNotBlank() -> parsed.sessionType
+                            slotH >= 3 -> "عملی"
+                            slotH == 2 -> "نظری"
+                            else -> ""
+                        }
+                        val noteParts = listOfNotNull(
+                            effectiveSessionType.takeIf(String::isNotBlank),
+                            if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "جدول برنامه کلاسی"
+                        )
+                        val effectiveNotes = noteParts.joinToString(" - ")
+
                         groups.forEach { group ->
                             results += ScheduleClass(
                                 id = "${scheduleId}_grid_${UUID.randomUUID().toString().take(8)}",
@@ -565,7 +596,7 @@ object PdfScheduleParser {
                                 classroom = classroom,
                                 groupCode = group,
                                 parity = effectiveParity,
-                                notes = if (sourceTag.isNotBlank()) "منبع: $sourceTag" else "جدول برنامه کلاسی"
+                                notes = effectiveNotes
                             )
                         }
                     }
@@ -573,6 +604,12 @@ object PdfScheduleParser {
             }
         }
         return results.distinctBy(ScheduleOfferingIdentity::key)
+    }
+
+    private fun calculateHours(start: String, end: String): Int {
+        val s = PersianTextNormalizer.toAsciiDigits(start).split(":").firstOrNull()?.toIntOrNull() ?: 0
+        val e = PersianTextNormalizer.toAsciiDigits(end).split(":").firstOrNull()?.toIntOrNull() ?: 0
+        return if (e > s) e - s else 2
     }
 
     private fun extractDay(title: String): Pair<String, Int>? {

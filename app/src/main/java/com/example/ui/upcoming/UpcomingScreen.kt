@@ -1,6 +1,7 @@
 package com.example.ui.upcoming
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LocationOn
@@ -54,6 +57,13 @@ import com.example.domain.normalizer.PersianTextNormalizer
 import com.example.ui.course.EventEditDialog
 import com.example.ui.util.DateTimeUtils
 
+enum class EventStatusFilter(val titleFa: String) {
+    ALL("همه"),
+    UPCOMING("پیش‌رو"),
+    OVERDUE("معوقه"),
+    COMPLETED("تکمیل‌شده")
+}
+
 @Composable
 fun UpcomingScreen(
     events: List<CourseEvent>,
@@ -64,15 +74,27 @@ fun UpcomingScreen(
     onOpenCourseDetail: (ScheduleClass) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var statusFilter by remember { mutableStateOf(EventStatusFilter.ALL) }
     var selectedTypeFilter by remember { mutableStateOf<CourseEventType?>(null) } // null = All
-    var showCompleted by remember { mutableStateOf(false) }
     var isAddingExamOrEvent by remember { mutableStateOf(false) }
+    var editingEvent by remember { mutableStateOf<CourseEvent?>(null) }
     var defaultTypeForAdd by remember { mutableStateOf(CourseEventType.EXAM) }
 
-    val filteredEvents = remember(events, selectedTypeFilter, showCompleted) {
+    val overdueCount = remember(events) { events.count { !it.isCompleted && DateTimeUtils.isOverdue(it.timestamp) } }
+    val upcomingCount = remember(events) { events.count { !it.isCompleted && !DateTimeUtils.isOverdue(it.timestamp) } }
+    val completedCount = remember(events) { events.count { it.isCompleted } }
+
+    val filteredEvents = remember(events, statusFilter, selectedTypeFilter) {
         events
-            .filter { (selectedTypeFilter == null || it.type == selectedTypeFilter) }
-            .filter { showCompleted || !it.isCompleted }
+            .filter { event ->
+                when (statusFilter) {
+                    EventStatusFilter.ALL -> true
+                    EventStatusFilter.UPCOMING -> !event.isCompleted && !DateTimeUtils.isOverdue(event.timestamp)
+                    EventStatusFilter.OVERDUE -> !event.isCompleted && DateTimeUtils.isOverdue(event.timestamp)
+                    EventStatusFilter.COMPLETED -> event.isCompleted
+                }
+            }
+            .filter { selectedTypeFilter == null || it.type == selectedTypeFilter }
             .sortedWith(
                 compareBy(
                     { it.isCompleted },
@@ -92,10 +114,25 @@ fun UpcomingScreen(
                 type = defaultTypeForAdd,
                 title = ""
             ),
+            availableCourses = myClasses,
+            scheduleClasses = myClasses,
             onDismiss = { isAddingExamOrEvent = false },
             onSave = { savedEvent ->
                 onAddOrUpdateEvent(savedEvent)
                 isAddingExamOrEvent = false
+            }
+        )
+    }
+
+    if (editingEvent != null) {
+        EventEditDialog(
+            initialEvent = editingEvent!!,
+            availableCourses = myClasses,
+            scheduleClasses = myClasses,
+            onDismiss = { editingEvent = null },
+            onSave = { savedEvent ->
+                onAddOrUpdateEvent(savedEvent)
+                editingEvent = null
             }
         )
     }
@@ -119,7 +156,7 @@ fun UpcomingScreen(
             ) {
                 Column {
                     Text(
-                        "رویدادها و امتحانات پیش‌رو",
+                        "رویدادها و وظایف",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -140,12 +177,71 @@ fun UpcomingScreen(
                 ) {
                     Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("ثبت رویداد / امتحان")
+                    Text("ثبت رویداد جدید")
                 }
             }
         }
 
-        // 2. Filter chips
+        // 2. Primary Status Filter Row (All, Upcoming, Overdue, Completed)
+        item {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                item {
+                    val isSelected = statusFilter == EventStatusFilter.ALL
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { statusFilter = EventStatusFilter.ALL },
+                        label = {
+                            Text("همه (${PersianTextNormalizer.toPersianDigits(events.size.toString())})")
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+                item {
+                    val isSelected = statusFilter == EventStatusFilter.UPCOMING
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { statusFilter = EventStatusFilter.UPCOMING },
+                        label = {
+                            Text("پیش‌رو (${PersianTextNormalizer.toPersianDigits(upcomingCount.toString())})")
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+                item {
+                    val isSelected = statusFilter == EventStatusFilter.OVERDUE
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { statusFilter = EventStatusFilter.OVERDUE },
+                        colors = if (overdueCount > 0 && !isSelected) {
+                            FilterChipDefaults.filterChipColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                                labelColor = MaterialTheme.colorScheme.error
+                            )
+                        } else FilterChipDefaults.filterChipColors(),
+                        label = {
+                            Text("معوقه (${PersianTextNormalizer.toPersianDigits(overdueCount.toString())})")
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+                item {
+                    val isSelected = statusFilter == EventStatusFilter.COMPLETED
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { statusFilter = EventStatusFilter.COMPLETED },
+                        label = {
+                            Text("تکمیل‌شده (${PersianTextNormalizer.toPersianDigits(completedCount.toString())})")
+                        },
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            }
+        }
+
+        // 3. Category / Type filter chips
         item {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -155,7 +251,7 @@ fun UpcomingScreen(
                     FilterChip(
                         selected = selectedTypeFilter == null,
                         onClick = { selectedTypeFilter = null },
-                        label = { Text("همه") },
+                        label = { Text("همه نوع‌ها") },
                         shape = RoundedCornerShape(10.dp)
                     )
                 }
@@ -202,33 +298,52 @@ fun UpcomingScreen(
             }
         }
 
-        // 3. Events List
+        // 4. Events List & Empty States
         if (filteredEvents.isEmpty()) {
             item {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 48.dp),
+                        .padding(top = 40.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val emptyIcon = when (statusFilter) {
+                        EventStatusFilter.OVERDUE, EventStatusFilter.COMPLETED -> Icons.Default.CheckCircle
+                        else -> Icons.Default.Event
+                    }
+                    val emptyTint = when (statusFilter) {
+                        EventStatusFilter.OVERDUE -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.outline
+                    }
+                    val emptyMessage = when (statusFilter) {
+                        EventStatusFilter.OVERDUE -> "هیچ رویداد یا تکلیف معوقه‌ای ندارید! همه کارها به‌موقع انجام شده‌اند."
+                        EventStatusFilter.COMPLETED -> "هنوز رویدادی تکمیل نشده است. کارهای انجام‌شده در اینجا بایگانی می‌شوند."
+                        EventStatusFilter.UPCOMING -> "هیچ رویداد پیش‌رویی ثبت نشده است."
+                        EventStatusFilter.ALL -> "هیچ رویداد یا امتحانی در این دسته یافت نشد."
+                    }
+
                     Icon(
-                        Icons.Default.Event,
+                        emptyIcon,
                         null,
                         modifier = Modifier.size(44.dp),
-                        tint = MaterialTheme.colorScheme.outline
+                        tint = emptyTint
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "هیچ رویداد یا امتحانی در این دسته یافت نشد.",
+                        emptyMessage,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp)
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = { isAddingExamOrEvent = true },
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("ثبت رویداد جدید")
+                    if (statusFilter != EventStatusFilter.OVERDUE && statusFilter != EventStatusFilter.COMPLETED) {
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = { isAddingExamOrEvent = true },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("ثبت رویداد جدید")
+                        }
                     }
                 }
             }
@@ -236,19 +351,29 @@ fun UpcomingScreen(
             items(filteredEvents, key = { it.id }) { event ->
                 val badgeColor = Color(event.type.badgeColorHex)
                 val countdown = DateTimeUtils.formatCountdown(event.timestamp)
+                val isOverdue = !event.isCompleted && DateTimeUtils.isOverdue(event.timestamp)
 
                 Card(
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(
-                        containerColor = if (event.isCompleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        else MaterialTheme.colorScheme.surfaceContainerHigh
+                        containerColor = when {
+                            event.isCompleted -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            isOverdue -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
+                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                        }
                     ),
                     border = BorderStroke(
                         1.dp,
-                        if (event.isCompleted) MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+                        when {
+                            event.isCompleted -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                            isOverdue -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+                            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+                        }
                     ),
-                    modifier = Modifier.fillMaxWidth().animateItem()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { editingEvent = event }
+                        .animateItem()
                 ) {
                     Column(Modifier.fillMaxWidth().padding(14.dp)) {
                         Row(
@@ -271,7 +396,34 @@ fun UpcomingScreen(
                                     )
                                 }
 
-                                if (countdown.isNotBlank()) {
+                                if (event.isCompleted) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = MaterialTheme.shapes.extraSmall,
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Text(
+                                            text = "تکمیل شده",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                } else if (isOverdue) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Surface(
+                                        shape = MaterialTheme.shapes.extraSmall,
+                                        color = MaterialTheme.colorScheme.errorContainer
+                                    ) {
+                                        Text(
+                                            text = "معوقه",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                } else if (countdown.isNotBlank()) {
                                     Spacer(Modifier.width(8.dp))
                                     Surface(
                                         shape = MaterialTheme.shapes.extraSmall,
@@ -288,16 +440,38 @@ fun UpcomingScreen(
                                 }
                             }
 
-                            Row {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(
                                     onClick = { onToggleEventCompleted(event) },
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(
                                         if (event.isCompleted) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                                        null,
+                                        contentDescription = if (event.isCompleted) "علامت به عنوان ناتمام" else "علامت به عنوان تکمیل شده",
                                         tint = if (event.isCompleted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                         modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { editingEvent = event },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "ویرایش",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onDeleteEvent(event.id) },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.DeleteOutline,
+                                        contentDescription = "حذف",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
                             }
@@ -307,7 +481,7 @@ fun UpcomingScreen(
 
                         // Title & Course
                         Text(
-                            text = event.title,
+                            text = event.displayTitle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             textDecoration = if (event.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
@@ -316,11 +490,15 @@ fun UpcomingScreen(
 
                         if (event.courseName.isNotBlank()) {
                             Spacer(Modifier.height(2.dp))
+                            val matchedClass = myClasses.firstOrNull {
+                                it.semanticKey == event.courseKey || it.courseName.trim().equals(event.courseName.trim(), ignoreCase = true)
+                            }
                             Text(
                                 text = "درس: ${event.courseName}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.secondary,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                modifier = if (matchedClass != null) Modifier.clickable { onOpenCourseDetail(matchedClass) } else Modifier
                             )
                         }
 
@@ -338,13 +516,13 @@ fun UpcomingScreen(
                                             Icons.Default.Schedule,
                                             null,
                                             modifier = Modifier.size(14.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            tint = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Spacer(Modifier.width(4.dp))
                                         Text(
                                             "${PersianTextNormalizer.toPersianDigits(event.dateString)}  ${PersianTextNormalizer.toPersianDigits(event.timeString)}",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }

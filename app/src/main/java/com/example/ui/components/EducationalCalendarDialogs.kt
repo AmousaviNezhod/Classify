@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,9 +14,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -162,6 +165,8 @@ fun EducationalWeekEditDialog(
 @Composable
 fun PersianDatePickerDialog(
     initialJdn: Long,
+    nextClassJdn: Long? = null,
+    nextClassLabel: String? = null,
     onDismiss: () -> Unit,
     onDateSelected: (newJdn: Long) -> Unit
 ) {
@@ -205,6 +210,61 @@ fun PersianDatePickerDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // Next Class Shortcut (if course has a scheduled future class)
+                if (nextClassJdn != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onDateSelected(nextClassJdn)
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.School,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(
+                                        text = "جلسه بعدی کلاس",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    if (!nextClassLabel.isNullOrBlank()) {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(
+                                            text = nextClassLabel,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = "انتخاب سریع",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
                 // Day Stepper
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -315,6 +375,139 @@ fun PersianDatePickerDialog(
                 }
             ) {
                 Text("انتخاب")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("انصراف")
+            }
+        }
+    )
+}
+
+@Composable
+fun PersianTimePickerDialog(
+    initialHour: Int = 10,
+    initialMinute: Int = 0,
+    onDismiss: () -> Unit,
+    onTimeSelected: (hour: Int, minute: Int) -> Unit
+) {
+    var selectedHour by remember { mutableIntStateOf(initialHour.coerceIn(0, 23)) }
+    var selectedMinute by remember { mutableIntStateOf(initialMinute.coerceIn(0, 59)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                Icons.Default.AccessTime,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+        },
+        title = {
+            Text(
+                text = "انتخاب ساعت رویداد",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Steppers row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Minute column
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("دقیقه", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        IconButton(onClick = { selectedMinute = (selectedMinute + 5) % 60 }) {
+                            Icon(Icons.Default.Add, "افزایش دقیقه")
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = PersianTextNormalizer.toPersianDigits("%02d".format(selectedMinute)),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                        IconButton(onClick = { selectedMinute = if (selectedMinute >= 5) selectedMinute - 5 else 55 }) {
+                            Icon(Icons.Default.Remove, "کاهش دقیقه")
+                        }
+                    }
+
+                    Text(":", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+
+                    // Hour column
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("ساعت", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        IconButton(onClick = { selectedHour = (selectedHour + 1) % 24 }) {
+                            Icon(Icons.Default.Add, "افزایش ساعت")
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = PersianTextNormalizer.toPersianDigits("%02d".format(selectedHour)),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                        IconButton(onClick = { selectedHour = if (selectedHour > 0) selectedHour - 1 else 23 }) {
+                            Icon(Icons.Default.Remove, "کاهش ساعت")
+                        }
+                    }
+                }
+
+                // Quick presets
+                Text("ساعت‌های متداول:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
+                ) {
+                    listOf(8 to 0, 10 to 0, 12 to 0, 14 to 0, 16 to 0).forEach { (h, m) ->
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (selectedHour == h && selectedMinute == m) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+                            modifier = Modifier.clickable {
+                                selectedHour = h
+                                selectedMinute = m
+                            }
+                        ) {
+                            Text(
+                                text = PersianTextNormalizer.toPersianDigits("%02d:00".format(h)),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (selectedHour == h && selectedMinute == m) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onTimeSelected(selectedHour, selectedMinute) }) {
+                Text("تأیید")
             }
         },
         dismissButton = {

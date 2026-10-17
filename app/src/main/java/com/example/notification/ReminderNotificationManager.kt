@@ -56,6 +56,7 @@ object ReminderNotificationManager {
         val now = System.currentTimeMillis()
         if (triggerTime <= now) {
             Log.d(TAG, "Reminder trigger time is in the past for event ${event.id}")
+            cancelReminder(context, event.id)
             return
         }
 
@@ -65,7 +66,7 @@ object ReminderNotificationManager {
         val intent = Intent(context, ReminderBroadcastReceiver::class.java).apply {
             action = ACTION_REMINDER
             putExtra(EXTRA_EVENT_ID, event.id)
-            putExtra(EXTRA_TITLE, event.title)
+            putExtra(EXTRA_TITLE, event.displayTitle)
             putExtra(EXTRA_COURSE_NAME, event.courseName)
             putExtra(EXTRA_REMINDER_TEXT, formatReminderDescription(event))
             putExtra(EXTRA_TYPE, event.type.name)
@@ -91,7 +92,7 @@ object ReminderNotificationManager {
             } else {
                 alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
             }
-            Log.d(TAG, "Scheduled reminder for ${event.title} at $triggerTime")
+            Log.d(TAG, "Scheduled reminder for ${event.displayTitle} at $triggerTime")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to schedule alarm for event ${event.id}", e)
         }
@@ -112,6 +113,16 @@ object ReminderNotificationManager {
         if (pendingIntent != null) {
             alarmManager.cancel(pendingIntent)
             pendingIntent.cancel()
+        }
+        dismissNotification(context, eventId)
+    }
+
+    fun dismissNotification(context: Context, eventId: String) {
+        val notificationId = (eventId.hashCode() and 0x7FFFFFFF)
+        try {
+            NotificationManagerCompat.from(context).cancel(notificationId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to dismiss notification $notificationId", e)
         }
     }
 

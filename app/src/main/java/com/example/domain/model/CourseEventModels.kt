@@ -14,7 +14,7 @@ enum class CourseEventType(val titleFa: String, val badgeColorHex: Long) {
     PRESENTATION("ارائه", 0xFF9A8CC4),
     ASSIGNMENT("تمرین / تحویل", 0xFF7A9BC9),
     QUIZ("کوئیز", 0xFF6FB2AC),
-    OTHER("سایر", 0xFF9BA4AF);
+    OTHER("سایر (عنوان سفارشی)", 0xFF9BA4AF);
 
     companion object {
         fun fromString(value: String): CourseEventType {
@@ -29,7 +29,7 @@ data class CourseEvent(
     val courseKey: String = "",
     val courseName: String = "",
     val courseCode: String = "",
-    val title: String,
+    val title: String = "",
     val type: CourseEventType = CourseEventType.OTHER,
     val dateString: String = "",
     val timeString: String = "",
@@ -40,6 +40,9 @@ data class CourseEvent(
     val isCompleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 ) {
+    val displayTitle: String
+        get() = if (title.isNotBlank()) title else type.titleFa
+
     fun toEntity(): CourseEventEntity = CourseEventEntity(
         id = id,
         courseKey = courseKey,

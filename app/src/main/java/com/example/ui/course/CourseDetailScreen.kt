@@ -16,13 +16,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -74,12 +77,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Close
+import com.example.domain.calendar.EducationalWeekConfig
+import com.example.domain.calendar.PersianCalendarHelper
 import com.example.domain.model.CourseEvent
 import com.example.domain.model.CourseEventType
 import com.example.domain.model.CourseNote
 import com.example.domain.model.CourseTask
 import com.example.domain.model.ScheduleClass
+import com.example.domain.model.ScheduleOfferingIdentity
+import com.example.domain.model.findNextClassOccurrence
 import com.example.domain.normalizer.PersianTextNormalizer
+import com.example.ui.components.PersianDatePickerDialog
+import com.example.ui.components.PersianTimePickerDialog
 import com.example.ui.components.SegmentedTabs
 import com.example.ui.theme.tactileClick
 import com.example.ui.util.DateTimeUtils
@@ -150,6 +160,8 @@ fun CourseDetailScreen(
                 courseCode = course.courseCode,
                 title = ""
             ),
+            availableCourses = listOf(course),
+            scheduleClasses = allSessions.ifEmpty { listOf(course) },
             onDismiss = {
                 isAddingEvent = false
                 eventToEdit = null
@@ -501,17 +513,24 @@ fun EventCard(
 ) {
     val badgeColor = Color(event.type.badgeColorHex)
     val countdownText = DateTimeUtils.formatCountdown(event.timestamp)
+    val isOverdue = !event.isCompleted && DateTimeUtils.isOverdue(event.timestamp)
 
     Card(
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = if (event.isCompleted) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-            else MaterialTheme.colorScheme.surfaceContainerHigh
+            containerColor = when {
+                event.isCompleted -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                isOverdue -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
+                else -> MaterialTheme.colorScheme.surfaceContainerHigh
+            }
         ),
         border = BorderStroke(
             1.dp,
-            if (event.isCompleted) MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-            else MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+            when {
+                event.isCompleted -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                isOverdue -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+                else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)
+            }
         ),
         modifier = modifier.fillMaxWidth()
     ) {
@@ -537,7 +556,34 @@ fun EventCard(
                         )
                     }
 
-                    if (countdownText.isNotBlank()) {
+                    if (event.isCompleted) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = "تکمیل شده",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else if (isOverdue) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.errorContainer
+                        ) {
+                            Text(
+                                text = "معوقه",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    } else if (countdownText.isNotBlank()) {
                         Spacer(Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(6.dp),
@@ -577,7 +623,7 @@ fun EventCard(
 
             // Title
             Text(
-                text = event.title,
+                text = event.displayTitle,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 textDecoration = if (event.isCompleted) TextDecoration.LineThrough else TextDecoration.None,
@@ -813,18 +859,51 @@ private fun NotesTabContent(
 @Composable
 fun EventEditDialog(
     initialEvent: CourseEvent,
+    availableCourses: List<ScheduleClass> = emptyList(),
+    scheduleClasses: List<ScheduleClass> = availableCourses,
+    eduWeekConfig: EducationalWeekConfig = EducationalWeekConfig(),
     onDismiss: () -> Unit,
     onSave: (CourseEvent) -> Unit
 ) {
     var title by remember { mutableStateOf(initialEvent.title) }
+    var titleTouched by remember { mutableStateOf(false) }
     var selectedType by remember { mutableStateOf(initialEvent.type) }
     var dateString by remember { mutableStateOf(initialEvent.dateString) }
     var timeString by remember { mutableStateOf(initialEvent.timeString) }
     var location by remember { mutableStateOf(initialEvent.location) }
     var description by remember { mutableStateOf(initialEvent.description) }
     var reminderMinutes by remember { mutableIntStateOf(initialEvent.reminderMinutesBefore) }
+
+    var selectedCourseKey by remember { mutableStateOf(initialEvent.courseKey) }
+    var selectedCourseName by remember { mutableStateOf(initialEvent.courseName) }
+    var selectedCourseCode by remember { mutableStateOf(initialEvent.courseCode) }
+
+    var courseDropdownExpanded by remember { mutableStateOf(false) }
     var typeDropdownExpanded by remember { mutableStateOf(false) }
     var reminderDropdownExpanded by remember { mutableStateOf(false) }
+
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+
+    var showOptionalTitleField by remember {
+        mutableStateOf(initialEvent.title.isNotBlank() && initialEvent.title != initialEvent.type.titleFa)
+    }
+
+    val isCustomTitleRequired = selectedType == CourseEventType.OTHER
+    val isTitleValid = !isCustomTitleRequired || title.trim().isNotBlank()
+
+    // Calculate next scheduled session of the selected course using timetable data
+    val nextClassOccurrence = remember(selectedCourseKey, selectedCourseName, scheduleClasses, eduWeekConfig) {
+        if (selectedCourseKey.isBlank() && selectedCourseName.isBlank()) {
+            null
+        } else {
+            val courseSessions = scheduleClasses.filter {
+                (selectedCourseKey.isNotBlank() && (it.semanticKey == selectedCourseKey || ScheduleOfferingIdentity.key(it) == selectedCourseKey)) ||
+                (selectedCourseName.isNotBlank() && it.courseName.trim().equals(selectedCourseName.trim(), ignoreCase = true))
+            }
+            findNextClassOccurrence(courseSessions, eduWeekConfig)
+        }
+    }
 
     val reminderOptions = listOf(
         -1 to "بدون یادآور",
@@ -835,33 +914,129 @@ fun EventEditDialog(
         10080 to "۱ هفته قبل (۷ روز)"
     )
 
+    if (showDatePicker) {
+        val initialJdn = remember(dateString) {
+            val ascii = PersianTextNormalizer.toAsciiDigits(dateString)
+            val parts = ascii.split('/', '-', '.', ' ').filter { it.isNotBlank() }.mapNotNull { it.toIntOrNull() }
+            if (parts.size >= 3 && parts[0] in 1300..1499 && parts[1] in 1..12 && parts[2] in 1..31) {
+                PersianCalendarHelper.jalaliToJdn(parts[0], parts[1], parts[2])
+            } else {
+                nextClassOccurrence?.jdn ?: PersianCalendarHelper.getTodayJdn()
+            }
+        }
+        PersianDatePickerDialog(
+            initialJdn = initialJdn,
+            nextClassJdn = nextClassOccurrence?.jdn,
+            nextClassLabel = nextClassOccurrence?.let {
+                "${it.scheduleClass.dayOfWeek} ${it.jalaliDate.formatted} (ساعت ${it.timeString})"
+            },
+            onDismiss = { showDatePicker = false },
+            onDateSelected = { newJdn ->
+                val jalali = PersianCalendarHelper.jdnToJalali(newJdn)
+                dateString = "%04d/%02d/%02d".format(jalali.year, jalali.month, jalali.day)
+                if (nextClassOccurrence != null && newJdn == nextClassOccurrence.jdn) {
+                    timeString = nextClassOccurrence.timeString
+                    if (location.isBlank() && nextClassOccurrence.scheduleClass.classroom.isNotBlank()) {
+                        location = nextClassOccurrence.scheduleClass.classroom
+                    }
+                }
+                showDatePicker = false
+            }
+        )
+    }
+
+    if (showTimePicker) {
+        val ascii = PersianTextNormalizer.toAsciiDigits(timeString)
+        val timeParts = ascii.split(':').mapNotNull { it.trim().toIntOrNull() }
+        val initH = if (timeParts.size >= 2) timeParts[0].coerceIn(0, 23) else 10
+        val initM = if (timeParts.size >= 2) timeParts[1].coerceIn(0, 59) else 0
+
+        PersianTimePickerDialog(
+            initialHour = initH,
+            initialMinute = initM,
+            onDismiss = { showTimePicker = false },
+            onTimeSelected = { h, m ->
+                timeString = "%02d:%02d".format(h, m)
+                showTimePicker = false
+            }
+        )
+    }
+
+    val scrollState = rememberScrollState()
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initialEvent.title.isBlank()) "رویداد جدید" else "ویرایش رویداد") },
+        title = {
+            Text(
+                text = if (initialEvent.title.isBlank()) "رویداد جدید" else "ویرایش رویداد",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(scrollState)
                     .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("عنوان رویداد *") },
-                    placeholder = { Text("مثلاً میان‌ترم، تمرین فصل ۴") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                // 1. Course Selector (if multiple courses are available)
+                if (availableCourses.isNotEmpty()) {
+                    val distinctCourses = remember(availableCourses) {
+                        availableCourses.distinctBy { it.courseName.trim() }
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = courseDropdownExpanded,
+                        onExpandedChange = { courseDropdownExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedCourseName.ifBlank { "عمومی (بدون درس)" },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("درس مرتبط") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = courseDropdownExpanded) },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = courseDropdownExpanded,
+                            onDismissRequest = { courseDropdownExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("عمومی (بدون درس)") },
+                                onClick = {
+                                    selectedCourseKey = ""
+                                    selectedCourseName = ""
+                                    selectedCourseCode = ""
+                                    courseDropdownExpanded = false
+                                }
+                            )
+                            distinctCourses.forEach { c ->
+                                DropdownMenuItem(
+                                    text = { Text(c.courseName) },
+                                    onClick = {
+                                        selectedCourseKey = c.semanticKey
+                                        selectedCourseName = c.courseName
+                                        selectedCourseCode = c.courseCode
+                                        courseDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
-                // Event Type Dropdown
+                // 2. Event Type Dropdown
                 ExposedDropdownMenuBox(
                     expanded = typeDropdownExpanded,
                     onExpandedChange = { typeDropdownExpanded = it }
                 ) {
+                    val currentTypeLabel = if (selectedType == CourseEventType.OTHER) "سایر (ورود عنوان سفارشی)" else selectedType.titleFa
                     OutlinedTextField(
-                        value = selectedType.titleFa,
+                        value = currentTypeLabel,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("نوع رویداد") },
@@ -876,10 +1051,14 @@ fun EventEditDialog(
                         onDismissRequest = { typeDropdownExpanded = false }
                     ) {
                         CourseEventType.entries.forEach { type ->
+                            val label = if (type == CourseEventType.OTHER) "سایر (ورود عنوان سفارشی)" else type.titleFa
                             DropdownMenuItem(
-                                text = { Text(type.titleFa) },
+                                text = { Text(label) },
                                 onClick = {
                                     selectedType = type
+                                    if (type == CourseEventType.OTHER) {
+                                        showOptionalTitleField = true
+                                    }
                                     typeDropdownExpanded = false
                                 }
                             )
@@ -887,30 +1066,232 @@ fun EventEditDialog(
                     }
                 }
 
+                // 3. Custom / Optional Title Field
+                if (isCustomTitleRequired) {
+                    // When "OTHER" is selected: custom title field is REVEALED and REQUIRED
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = {
+                            title = it
+                            titleTouched = true
+                        },
+                        label = { Text("عنوان سفارشی رویداد *") },
+                        placeholder = { Text("مثلاً وبینار، جلسه، دفاع، خرید کتاب...") },
+                        singleLine = true,
+                        isError = titleTouched && title.trim().isBlank(),
+                        supportingText = if (titleTouched && title.trim().isBlank()) {
+                            { Text("ورود عنوان برای این گزینه الزامی است", color = MaterialTheme.colorScheme.error) }
+                        } else null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else if (showOptionalTitleField) {
+                    // For standard types: optional title field when user chooses to customize
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("عنوان دلخواه (اختیاری)") },
+                        placeholder = { Text("پیش‌فرض: ${selectedType.titleFa}") },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                title = ""
+                                showOptionalTitleField = false
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "حذف عنوان دلخواه", modifier = Modifier.size(18.dp))
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    // Standard type with hidden title field: clean button to reveal if desired
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Start
+                    ) {
+                        TextButton(
+                            onClick = { showOptionalTitleField = true },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("افزودن عنوان دلخواه (اختیاری)", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+
+                // 4. Date and Time Fields with Dialog Pickers
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedTextField(
-                        value = dateString,
-                        onValueChange = { dateString = it },
-                        label = { Text("تاریخ") },
-                        placeholder = { Text("1403/10/25") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = timeString,
-                        onValueChange = { timeString = it },
-                        label = { Text("ساعت") },
-                        placeholder = { Text("10:30") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
-                    )
+                    Box(modifier = Modifier.weight(1.1f)) {
+                        OutlinedTextField(
+                            value = if (dateString.isBlank()) "" else PersianTextNormalizer.toPersianDigits(dateString),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("تاریخ شمسی *") },
+                            placeholder = { Text("انتخاب تاریخ") },
+                            trailingIcon = {
+                                IconButton(onClick = { showDatePicker = true }) {
+                                    Icon(
+                                        Icons.Default.CalendarMonth,
+                                        contentDescription = "انتخاب تاریخ",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showDatePicker = true }
+                        )
+                    }
+
+                    Box(modifier = Modifier.weight(0.9f)) {
+                        OutlinedTextField(
+                            value = if (timeString.isBlank()) "" else PersianTextNormalizer.toPersianDigits(timeString),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("ساعت") },
+                            placeholder = { Text("انتخاب ساعت") },
+                            trailingIcon = {
+                                IconButton(onClick = { showTimePicker = true }) {
+                                    Icon(
+                                        Icons.Default.AccessTime,
+                                        contentDescription = "انتخاب ساعت",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .clickable { showTimePicker = true }
+                        )
+                    }
                 }
 
+                // 5. Quick Date Preset Chips (including "جلسه بعدی کلاس" if available)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Next class shortcut chip
+                    if (nextClassOccurrence != null) {
+                        val isNextClassSelected = dateString == nextClassOccurrence.dateString
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isNextClassSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isNextClassSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+                            ),
+                            modifier = Modifier.clickable {
+                                dateString = nextClassOccurrence.dateString
+                                timeString = nextClassOccurrence.timeString
+                                if (location.isBlank() && nextClassOccurrence.scheduleClass.classroom.isNotBlank()) {
+                                    location = nextClassOccurrence.scheduleClass.classroom
+                                }
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.School,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "جلسه بعدی (${nextClassOccurrence.scheduleClass.dayOfWeek})",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    val todayJdn = remember { PersianCalendarHelper.getTodayJdn() }
+                    listOf(
+                        "امروز" to todayJdn,
+                        "فردا" to (todayJdn + 1),
+                        "۳ روز بعد" to (todayJdn + 3),
+                        "۱ هفته بعد" to (todayJdn + 7)
+                    ).forEach { (label, jdn) ->
+                        val jal = remember(jdn) { PersianCalendarHelper.jdnToJalali(jdn) }
+                        val targetStr = remember(jal) { "%04d/%02d/%02d".format(jal.year, jal.month, jal.day) }
+                        val isSelected = dateString == targetStr
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(
+                                1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+                            ),
+                            modifier = Modifier.clickable {
+                                dateString = targetStr
+                            }
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 6. Live Preview / Countdown chip
+                if (dateString.isNotBlank()) {
+                    val computedTimestamp = remember(dateString, timeString) {
+                        DateTimeUtils.parseDateToTimestamp(dateString, timeString)
+                    }
+                    if (computedTimestamp > 0L) {
+                        val countdown = DateTimeUtils.formatCountdown(computedTimestamp)
+                        val isOverdue = DateTimeUtils.isOverdue(computedTimestamp)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isOverdue) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    if (isOverdue) Icons.Default.Alarm else Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    tint = if (isOverdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (isOverdue) "مهلت گذشته: $countdown" else "زمان‌بندی: $countdown",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isOverdue) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 7. Location
                 OutlinedTextField(
                     value = location,
                     onValueChange = { location = it },
@@ -921,7 +1302,7 @@ fun EventEditDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Reminder Dropdown
+                // 8. Reminder Dropdown
                 ExposedDropdownMenuBox(
                     expanded = reminderDropdownExpanded,
                     onExpandedChange = { reminderDropdownExpanded = it }
@@ -931,7 +1312,7 @@ fun EventEditDialog(
                         value = currentReminderText,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("ارسال یادآور (Notification)") },
+                        label = { Text("ارسال یادآور (اعلان)") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = reminderDropdownExpanded) },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
@@ -954,6 +1335,7 @@ fun EventEditDialog(
                     }
                 }
 
+                // 9. Description
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
@@ -968,11 +1350,15 @@ fun EventEditDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (title.isNotBlank()) {
+                    if (isTitleValid) {
                         val computedTimestamp = DateTimeUtils.parseDateToTimestamp(dateString, timeString)
+                        val finalTitle = title.trim()
                         onSave(
                             initialEvent.copy(
-                                title = title.trim(),
+                                courseKey = selectedCourseKey,
+                                courseName = selectedCourseName,
+                                courseCode = selectedCourseCode,
+                                title = finalTitle,
                                 type = selectedType,
                                 dateString = dateString.trim(),
                                 timeString = timeString.trim(),
@@ -982,9 +1368,11 @@ fun EventEditDialog(
                                 description = description.trim()
                             )
                         )
+                    } else {
+                        titleTouched = true
                     }
                 },
-                enabled = title.isNotBlank()
+                enabled = isTitleValid
             ) {
                 Text("ذخیره")
             }
